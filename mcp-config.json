@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "internet-names": {
+      "command": "/Users/andrew/cursor/InternetNamesMCP/.venv/bin/python",
+      "args": ["/Users/andrew/cursor/InternetNamesMCP/server.py"]
+    }
+  }
+}
