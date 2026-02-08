@@ -4,7 +4,7 @@ Internet Names MCP Server
 An MCP server for checking availability of domain names, social media handles, and subreddits.
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 
 def main():
@@ -40,11 +40,11 @@ def print_help():
 An MCP server for checking availability of domain names, social media handles, and subreddits.
 
 Usage:
-    internet-names-mcp              Run the MCP server
-    internet-names-mcp --setup      Configure API keys interactively
-    internet-names-mcp --show-config Show current configuration
-    internet-names-mcp --version    Show version
-    internet-names-mcp --help       Show this help
+    internet-names-mcp                 Run the MCP server
+    internet-names-mcp --setup         Configure API keys interactively
+    internet-names-mcp --show-config   Show current configuration
+    internet-names-mcp --version       Show version
+    internet-names-mcp --help          Show this help
 
 Configuration:
     The server works out of the box using RDAP for domain lookups (no API key required).
@@ -55,7 +55,7 @@ Configuration:
     3. Click "Generate New API Key"
     4. Run: uvx internet-names-mcp --setup
 
-    Or set environment variable: export NAMESILO_API_KEY=your-key
+    Or set the environment variable `NAMESILO_API_KEY` with your key in your LLM
 
 Claude Code Setup:
     claude mcp add --scope user internet-names-mcp uvx internet-names-mcp

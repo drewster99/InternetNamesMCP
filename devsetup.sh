@@ -14,7 +14,7 @@ fi
 
 usage()
 {
-    echo "usage: source $BASH_SOURCE [--clean | --help]" 1>&2
+    echo "usage: source $BASH_SOURCE [--clean] [--setup] [--help]" 1>&2
 }
 
 showHelp()
@@ -23,37 +23,46 @@ showHelp()
     echo "" 1>&2
     echo "Options:" 1>&2
     echo "--help        Shows this message" 1>&2
-    echo "--clean       Deletes python cache and virtual environment (does not do setup)"
-    echo "--setup       Sets up python venv and dependencies for development and testing (default)"
+    echo "--clean       Deletes python cache and virtual environment"
+    echo "--setup       Sets up python venv and dependencies for development and testing (default if no args)"
+    echo "" 1>&2
+    echo "Multiple options can be combined, e.g.: source $BASH_SOURCE --clean --setup" 1>&2
 }
 
-doSetup=1
+doSetup=0
 doClean=0
-if [ $# -gt 1 ]; then
-    usage
-    return 2
-elif [ $# -eq 1 ]; then
-    # By default, we won't do the setup if we got any arguments
-    # unless the user specifically gave us --setup
-    doSetup=0
-    if [ "$1" = "--help" ]; then
-        showHelp
-        usage
-        return 3
-    elif [ "$1" = "--clean" ]; then
-        doClean=1
-    elif [ "$1" = "--setup" ]; then
-        doSetup=1
-    else
-        echo "`basename $0`: error: unknown argument \"$1\"" 1>&2
-        usage
-        return 4
-    fi
+
+if [ $# -eq 0 ]; then
+    doSetup=1
+else
+    for arg in "$@"; do
+        if [ "$arg" = "--help" ]; then
+            showHelp
+            usage
+            return 0
+        elif [ "$arg" = "--clean" ]; then
+            doClean=1
+        elif [ "$arg" = "--setup" ]; then
+            doSetup=1
+        else
+            echo "`basename $BASH_SOURCE`: error: unknown argument \"$arg\"" 1>&2
+            usage
+            return 1
+        fi
+    done
 fi
 
 # Clean if requested
 if [ $doClean -eq 1 ]; then
     echo "Cleaning..."
+    if [ -x .venv/bin/playwright ]; then
+        echo "Uninstalling Playwright browsers"
+        .venv/bin/playwright uninstall --all
+    fi
+    if [ -d ~/Library/Caches/ms-playwright ]; then
+        echo "Deleting Playwright browser cache"
+        rm -rf ~/Library/Caches/ms-playwright
+    fi
     if [[ -n "$VIRTUAL_ENV" ]]; then
         echo "Deactivating virtual environment: $VIRTUAL_ENV"
         type deactivate 2>&1 > /dev/null

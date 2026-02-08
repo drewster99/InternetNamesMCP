@@ -11,7 +11,7 @@ An MCP server for checking availability of domain names, social media handles, a
 
 ## Quick Start
 
-### 1. Add to Claude Code
+### 1. Add to Claude Code (Recommended)
 
 ```bash
 claude mcp add --scope user internet-names-mcp uvx internet-names-mcp
@@ -37,7 +37,40 @@ uvx internet-names-mcp --setup
 You'll be prompted to paste your API key.
 On macOS, your API key is stored safely in your iCloud or login keychain as `internet-names-mcp.namesilo`. On other platforms, it's stored in `~/.config/internet-names-mcp/config.json`.
 
-Or, you could set it via environment variable `NAMESILO_API_KEY` in your LLM's MCP server configuration file.
+Using `--setup` is the preferred method as it stores the key securely. Alternatively, you can set it via environment variable (see Manual Configuration below).
+
+## Manual Configuration
+
+If you're not using Claude Code, or prefer to configure MCP servers manually, add this to your MCP client's configuration file (e.g., `claude_desktop_config.json` for Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "internet-names-mcp": {
+      "command": "uvx",
+      "args": ["internet-names-mcp"]
+    }
+  }
+}
+```
+
+To include a NameSilo API key via environment variable (if you haven't used `--setup`):
+
+```json
+{
+  "mcpServers": {
+    "internet-names-mcp": {
+      "command": "uvx",
+      "args": ["internet-names-mcp"],
+      "env": {
+        "NAMESILO_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Note: Using `uvx internet-names-mcp --setup` to store the API key is preferred over environment variables, as it uses secure storage (macOS Keychain) when available.
 
 
 ## CLI Commands
