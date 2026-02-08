@@ -9,6 +9,8 @@ An MCP server for checking availability of:
 
 import asyncio
 import json
+import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -17,6 +19,12 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 from .config import get_namesilo_key
+
+# Suppress httpx request logging by default (shows API keys in URLs)
+# Set INTERNET_NAMES_DEBUG=1 to enable verbose HTTP logging
+if not os.environ.get("INTERNET_NAMES_DEBUG"):
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 from .rdap_bootstrap import get_rdap_server
 from .rdap_client import (
     DomainStatus,
@@ -37,7 +45,7 @@ mcp._mcp_server.version = VERSION
 NAMESILO_API_URL = "https://www.namesilo.com/api/checkRegisterAvailability"
 DEFAULT_TLDS = ["com", "io", "ai", "co", "app", "dev", "net", "org"]
 
-# Platforms supported by Sherlock + Twitter (checked via Playwright)
+# Platforms supported by Sherlock + Twitter (via Playwright)
 SUPPORTED_PLATFORMS = [
     "instagram",
     "twitter",
@@ -267,7 +275,7 @@ def _check_twitter(username: str) -> dict:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        return {"available": None, "error": "playwright not installed"}
+        return {"available": None, "error": "playwright not installed. Run: pip install playwright"}
 
     try:
         with sync_playwright() as p:
@@ -308,7 +316,10 @@ def _check_twitter(username: str) -> dict:
                 return {"available": None, "error": "Could not determine"}
 
     except Exception as e:
-        return {"available": None, "error": str(e)[:100]}
+        error_str = str(e)
+        if "Executable doesn't exist" in error_str or "browserType.launch" in error_str.lower():
+            return {"available": None, "error": "Chromium not installed. Run: playwright install chromium"}
+        return {"available": None, "error": error_str[:100]}
 
 
 def _check_handles_internal(username: str, platforms: list[str]) -> dict[str, dict]:
@@ -558,13 +569,19 @@ def check_handles(
 
     username = username.strip()
 
+    supported = SUPPORTED_PLATFORMS
     if platforms is None:
-        platforms = SUPPORTED_PLATFORMS.copy()
+        platforms = supported.copy()
     else:
         # Normalize to lowercase
         platforms = [p.lower() for p in platforms]
+        # Check if twitter was requested but not available
+        if "twitter" in platforms and "twitter" not in supported:
+            return json.dumps({
+                "error": "Twitter checking unavailable. Chromium browser failed to install. Try manually: playwright install chromium"
+            })
         # Filter to only supported platforms
-        platforms = [p for p in platforms if p in SUPPORTED_PLATFORMS]
+        platforms = [p for p in platforms if p in supported]
 
     if not platforms:
         return json.dumps({"error": "No valid platforms specified"})
@@ -687,11 +704,17 @@ async def check_everything(
     if method not in ("rdap", "namesilo", "auto"):
         return json.dumps({"error": f"Invalid method '{method}'. Use 'rdap', 'namesilo', or 'auto'"})
 
+    supported = SUPPORTED_PLATFORMS
     if platforms is None:
-        platforms = SUPPORTED_PLATFORMS.copy()
+        platforms = supported.copy()
     else:
         platforms = [p.lower() for p in platforms]
-        platforms = [p for p in platforms if p in SUPPORTED_PLATFORMS]
+        # Check if twitter was requested but not available
+        if "twitter" in platforms and "twitter" not in supported:
+            return json.dumps({
+                "error": "Twitter checking unavailable. Chromium browser failed to install. Try manually: playwright install chromium"
+            })
+        platforms = [p for p in platforms if p in supported]
 
     if not platforms:
         return json.dumps({"error": "No valid platforms specified"})
