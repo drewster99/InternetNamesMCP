@@ -105,7 +105,11 @@ def run_setup():
 
     if key:
         if set_namesilo_key(key):
-            print(f"\n✓ API key saved to {get_config_file()}")
+            import sys
+            if sys.platform == "darwin":
+                print("\n✓ API key saved to macOS Keychain")
+            else:
+                print(f"\n✓ API key saved to {get_config_file()}")
             test_api_key(key)
         else:
             print("\n✗ Failed to save API key")
@@ -121,30 +125,18 @@ def run_setup():
 
 def show_config():
     """Show current configuration."""
-    from .config import get_namesilo_key, get_config_file, load_config
+    from .config import get_namesilo_key, get_key_source
 
     print("Configuration")
     print("=" * 50)
     print()
 
-    config_file = get_config_file()
-    print(f"Config file: {config_file}")
-    print(f"  Exists: {config_file.exists()}")
-    print()
-
     key = get_namesilo_key()
     if key:
         masked = mask_key(key)
+        source = get_key_source()
         print(f"NameSilo API key: {masked}")
-
-        # Determine source
-        config = load_config()
-        if config.get('namesilo_api_key'):
-            print("  Source: config file")
-        elif 'NAMESILO_API_KEY' in __import__('os').environ:
-            print("  Source: environment variable")
-        else:
-            print("  Source: macOS Keychain")
+        print(f"  Source: {source}")
     else:
         print("NameSilo API key: Not configured")
         print("  Domain lookups will use RDAP (no pricing)")
