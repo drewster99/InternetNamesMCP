@@ -98,7 +98,38 @@ def run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check, capture_output=True, text=True)
 
 
+def check_dependencies() -> bool:
+    """Check that build and twine are installed."""
+    missing = []
+
+    try:
+        import build  # noqa: F401
+    except ImportError:
+        missing.append("build")
+
+    try:
+        import twine  # noqa: F401
+    except ImportError:
+        missing.append("twine")
+
+    if missing:
+        print(f"Error: Missing required packages: {', '.join(missing)}")
+        print()
+        print("Install dev dependencies with:")
+        print('    pip install -e ".[dev]"')
+        print()
+        print("Or set up the full dev environment:")
+        print("    source devsetup.sh")
+        return False
+
+    return True
+
+
 def main():
+    # Check dependencies first
+    if not check_dependencies():
+        sys.exit(1)
+
     # Determine version bump type
     if len(sys.argv) > 1:
         bump = sys.argv[1]

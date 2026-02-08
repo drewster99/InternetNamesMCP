@@ -1,6 +1,6 @@
 [project]
 name = "internet-names-mcp"
-version = "0.1.5"
+version = "0.1.6"
 description = "MCP server for checking availability of domain names, social media handles, and subreddits"
 readme = "README.md"
 license = "MIT"
@@ -24,6 +24,12 @@ dependencies = [
     "httpx>=0.25.0",
     "sherlock-project>=0.14.0",
     "playwright>=1.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.0.0",
+    "twine>=5.0.0",
 ]
 
 [project.scripts]

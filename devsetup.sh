@@ -99,6 +99,6 @@ fi
 echo source .venv/bin/activate
 source .venv/bin/activate
 
-# Install dependencies
-echo pip install -e .
-pip install -e .
+# Install dependencies (including dev dependencies for build/publish tools)
+echo 'pip install -e ".[dev]"'
+pip install -e ".[dev]"
