@@ -387,6 +387,17 @@ def _check_subreddits_internal(names: list[str]) -> list[dict]:
 # =============================================================================
 
 @mcp.tool()
+def version() -> str:
+    """
+    Get the version of the Internet Names MCP server.
+
+    Returns:
+        Version string including server name and version number.
+    """
+    return f"Internet Names MCP Server version {VERSION}"
+
+
+@mcp.tool()
 def get_supported_socials() -> str:
     """
     Get list of supported social media platforms.

@@ -68,7 +68,7 @@ def run_setup():
     from .config import get_namesilo_key, set_namesilo_key, get_config_file
 
     print("=" * 50)
-    print("Internet Names MCP - Setup")
+    print(f"Internet Names MCP v{__version__} - Setup")
     print("=" * 50)
     print()
 
