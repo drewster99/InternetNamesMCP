@@ -4,60 +4,14 @@ An MCP server for checking availability of domain names, social media handles, a
 
 ## Features
 
-- **Domain names** - Check availability and pricing via NameSilo API
+- **Domain names** - Check availability via RDAP (free) or NameSilo API (includes pricing)
 - **Social media handles** - Instagram, Twitter/X, Reddit, YouTube, TikTok, Twitch, Threads
 - **Subreddits** - Check if subreddit names are available on Reddit
 - **Comprehensive search** - Generate name combinations and check everything at once
 
-## Requirements
+## Quick Start
 
-- Python 3.11+
-- macOS (for Keychain API key storage)
-- [Sherlock](https://github.com/sherlock-project/sherlock) for social media checks
-- Playwright + Chromium for Twitter/X checks
-- NameSilo API key (free) for domain checks
-
-## Setup
-
-### 1. Clone and create virtual environment
-
-```bash
-git clone <repo-url> InternetNamesMCP
-cd InternetNamesMCP
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Install Python dependencies
-
-```bash
-pip install mcp httpx sherlock-project playwright
-```
-
-### 3. Install Playwright browser
-
-```bash
-playwright install chromium
-```
-
-### 4. Set your NameSilo API key
-
-Get a free API key from: https://www.namesilo.com/account/api-manager
-
-```bash
-python setup.py --set-api-key
-```
-
-This stores the key securely in your macOS Keychain.
-
-Other setup commands:
-```bash
-python setup.py --show-api-key   # Show stored key (masked)
-python setup.py --test           # Test the configuration
-python setup.py --delete-api-key # Remove from keychain
-```
-
-### 5. Configure Claude Code
+### 1. Add to Claude Code
 
 Add to `~/.claude/settings.json`:
 
@@ -65,14 +19,50 @@ Add to `~/.claude/settings.json`:
 {
   "mcpServers": {
     "internet-names": {
-      "command": "/path/to/InternetNamesMCP/.venv/bin/python",
-      "args": ["/path/to/InternetNamesMCP/server.py"]
+      "command": "uvx",
+      "args": ["internet-names-mcp"]
     }
   }
 }
 ```
 
-Replace `/path/to/InternetNamesMCP` with your actual path.
+That's it! The server works immediately using RDAP for domain lookups.
+
+### 2. Optional: Configure NameSilo API (for domain pricing)
+
+Run the setup command:
+
+```bash
+uvx internet-names-mcp --setup
+```
+
+Or set the API key via environment variable:
+
+```json
+{
+  "mcpServers": {
+    "internet-names": {
+      "command": "uvx",
+      "args": ["internet-names-mcp"],
+      "env": {
+        "NAMESILO_API_KEY": "your-key-here"
+      }
+    }
+  }
+}
+```
+
+Get a free API key at: https://www.namesilo.com/account/api-manager
+
+## CLI Commands
+
+```bash
+uvx internet-names-mcp              # Run the MCP server
+uvx internet-names-mcp --setup      # Configure API keys interactively
+uvx internet-names-mcp --show-config # Show current configuration
+uvx internet-names-mcp --version    # Show version
+uvx internet-names-mcp --help       # Show help
+```
 
 ## Tools
 
@@ -91,7 +81,7 @@ Note: `subreddit` is checked via `check_subreddits()`, not `check_handles()`.
 
 ---
 
-### check_domains(names, tlds?, onlyReportAvailable?)
+### check_domains(names, tlds?, method?, onlyReportAvailable?)
 
 Check domain name availability and pricing.
 
@@ -100,6 +90,7 @@ Check domain name availability and pricing.
 |------|------|---------|-------------|
 | `names` | list[str] | required | Domain names or base names to check |
 | `tlds` | list[str] | `["com", "io", "ai", "co", "app", "dev", "net", "org"]` | TLDs to check |
+| `method` | str | `"auto"` | `"auto"`, `"rdap"`, or `"namesilo"` |
 | `onlyReportAvailable` | bool | `false` | If true, omit unavailable domains from response |
 
 If a name contains a dot, it's treated as a full domain. Otherwise, it's combined with each TLD.
@@ -172,7 +163,7 @@ Check subreddit name availability on Reddit.
 
 ---
 
-### check_everything(components, tlds?, platforms?, requireAllTLDsAvailable?, onlyReportAvailable?)
+### check_everything(components, tlds?, platforms?, method?, requireAllTLDsAvailable?, onlyReportAvailable?, alsoIncludeHyphens?)
 
 Comprehensive check across domains and social media. Generates name combinations from components, checks domains first (fast), then checks social handles for names that pass the domain check.
 
@@ -182,8 +173,10 @@ Comprehensive check across domains and social media. Generates name combinations
 | `components` | list[str] | required | Name components to combine (e.g., `["red", "sweater"]`) |
 | `tlds` | list[str] | `["com", "net", "org", "io", "ai"]` | TLDs to check |
 | `platforms` | list[str] | all platforms | Social platforms to check |
+| `method` | str | `"auto"` | `"auto"`, `"rdap"`, or `"namesilo"` |
 | `requireAllTLDsAvailable` | bool | `false` | If true, name must be available in ALL TLDs to pass |
 | `onlyReportAvailable` | bool | `false` | If true, omit unavailable items from response |
+| `alsoIncludeHyphens` | bool | `false` | If true, also check hyphenated versions |
 
 **Name Generation:**
 From components `["red", "sweater"]`, generates:
@@ -214,73 +207,77 @@ From components `["red", "sweater"]`, generates:
 
 The `fullyAvailable` list contains names that are available on ALL checked platforms.
 
-## Running Tests
+## Domain Lookup Methods
 
-The test suite verifies all functionality works correctly.
+| Method | Description | Pricing | Speed |
+|--------|-------------|---------|-------|
+| `auto` | Uses NameSilo if API key configured, otherwise RDAP | With NameSilo | Fast |
+| `rdap` | Direct registry queries via IANA bootstrap | No | Fast |
+| `namesilo` | NameSilo API (requires API key) | Yes | Fast |
+
+## Configuration
+
+Configuration is stored in:
+- **macOS/Linux:** `~/.config/internet-names-mcp/config.json`
+- **Windows:** `%APPDATA%/internet-names-mcp/config.json`
+
+API key lookup order:
+1. Config file (set via `--setup`)
+2. Environment variable (`NAMESILO_API_KEY`)
+3. macOS Keychain (legacy)
+
+## Development
+
+### Local Setup
+
+```bash
+git clone <repo-url> InternetNamesMCP
+cd InternetNamesMCP
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+playwright install chromium
+```
+
+### Running Tests
 
 ```bash
 source .venv/bin/activate
 python test_server.py
 ```
 
-### Expected output
+### Project Structure
 
 ```
-============================================================
-  INTERNET NAMES MCP SERVER - TEST SUITE
-============================================================
-
-============================================================
-  get_supported_socials
-============================================================
-  ✓ returns valid JSON
-  ✓ includes instagram
-  ...
-
-============================================================
-  SUMMARY: 50/50 passed, 0 failed
-============================================================
-
-Completed in 26.8 seconds
-```
-
-The test suite returns exit code 0 on success, 1 on failure.
-
-## Files
-
-```
-├── server.py           # MCP server (main file)
-├── setup.py            # API key setup utility
-├── keychain.py         # macOS Keychain integration
-├── test_server.py      # Test suite
-├── check_domains.py    # Domain CLI (standalone)
-├── check_handles.py    # Sherlock CLI (standalone)
-├── check_subreddits.py # Reddit CLI (standalone)
-└── README.md           # This file
+├── src/internet_names_mcp/
+│   ├── __init__.py      # CLI entry point
+│   ├── server.py        # MCP server
+│   ├── config.py        # Configuration management
+│   ├── rdap_bootstrap.py # RDAP bootstrap cache
+│   └── rdap_client.py   # Async RDAP client
+├── pyproject.toml       # Package configuration
+└── README.md
 ```
 
 ## Troubleshooting
 
 ### "sherlock not found"
 
-Install Sherlock:
+Sherlock is installed automatically as a dependency. If you see this error, reinstall:
 ```bash
-pip install sherlock-project
+uvx --reinstall internet-names-mcp
 ```
 
-### "playwright not installed"
+### "playwright not installed" or Chromium errors
 
-Install Playwright and browser:
+Install Playwright browser:
 ```bash
-pip install playwright
 playwright install chromium
 ```
 
-### "No API key configured"
-
-Set your NameSilo API key:
+Or with uvx:
 ```bash
-python setup.py --set-api-key
+uvx --from playwright install chromium
 ```
 
 ### Twitter checks fail or timeout
