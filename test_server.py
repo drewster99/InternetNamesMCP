@@ -3,7 +3,7 @@
 Test suite for Internet Names MCP Server
 
 Usage:
-    source .venv/bin/activate
+    source ./devsetup.sh
     python test_server.py
 """
 
@@ -13,9 +13,8 @@ import sys
 if sys.version_info < (3, 10):
     print("Error: Python 3.10+ required")
     print()
-    print("Activate the virtual environment:")
-    print("    source .venv/bin/activate")
-    print("    python test_server.py")
+    print("Set up the development environment:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 try:
@@ -24,9 +23,8 @@ try:
 except ImportError as e:
     print(f"Error: {e}")
     print()
-    print("Activate the virtual environment first:")
-    print("    source .venv/bin/activate")
-    print("    python test_server.py")
+    print("Set up the development environment first:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 import asyncio
@@ -48,10 +46,7 @@ def generate_unique_name() -> str:
     return f"xyztest{suffix}"
 
 
-# Add current directory to path for imports
-sys.path.insert(0, ".")
-
-from server import (
+from internet_names_mcp.server import (
     get_supported_socials,
     check_domains,
     check_handles,
@@ -63,7 +58,7 @@ from server import (
     VERSION,
 )
 
-from rdap_bootstrap import (
+from internet_names_mcp.rdap_bootstrap import (
     get_rdap_server,
     is_tld_supported,
     get_supported_tlds,
@@ -107,7 +102,7 @@ class TestRunner:
         if condition:
             print(f"  ✓ {name}")
         else:
-            print(f"  ✗ {name}")
+            print(f"  ❌ {name}")
             if message:
                 print(f"    → {message}")
 
@@ -148,7 +143,7 @@ class TestRunner:
             print("\nFailed tests:")
             for r in self.results:
                 if not r.passed:
-                    print(f"  ✗ {r.name}")
+                    print(f"  ❌ {r.name}")
                     if r.message:
                         print(f"    → {r.message}")
 

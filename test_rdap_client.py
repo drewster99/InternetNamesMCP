@@ -3,7 +3,7 @@
 Test suite for Async RDAP Client
 
 Usage:
-    source .venv/bin/activate
+    source ./devsetup.sh
     python test_rdap_client.py
 """
 
@@ -13,9 +13,8 @@ import sys
 if sys.version_info < (3, 10):
     print("Error: Python 3.10+ required")
     print()
-    print("Activate the virtual environment:")
-    print("    source .venv/bin/activate")
-    print("    python test_rdap_client.py")
+    print("Set up the development environment:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 try:
@@ -24,9 +23,8 @@ try:
 except ImportError as e:
     print(f"Error: {e}")
     print()
-    print("Activate the virtual environment first:")
-    print("    source .venv/bin/activate")
-    print("    python test_rdap_client.py")
+    print("Set up the development environment first:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 import asyncio
@@ -35,10 +33,7 @@ import string
 import time
 from dataclasses import dataclass
 
-# Add current directory to path for imports
-sys.path.insert(0, ".")
-
-from rdap_client import (
+from internet_names_mcp.rdap_client import (
     AsyncRDAPClient,
     DomainResult,
     DomainStatus,
@@ -86,9 +81,9 @@ class TestRunner:
         self.results.append(result)
 
         if condition:
-            print(f"  \u2713 {name}")
+            print(f"  ✓ {name}")
         else:
-            print(f"  \u2717 {name}")
+            print(f"  ❌ {name}")
             if message:
                 print(f"    \u2192 {message}")
 
@@ -106,7 +101,7 @@ class TestRunner:
             print("\nFailed tests:")
             for r in self.results:
                 if not r.passed:
-                    print(f"  \u2717 {r.name}")
+                    print(f"  ❌ {r.name}")
                     if r.message:
                         print(f"    \u2192 {r.message}")
 

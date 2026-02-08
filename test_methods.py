@@ -4,11 +4,24 @@ Compare domain availability results between RDAP and NameSilo API methods.
 
 This test runs the same set of domains through both methods and flags any
 discrepancies in availability results.
+
+Usage:
+    source ./devsetup.sh
+    python test_methods.py
 """
 
 import asyncio
 import sys
-from server import check_domains
+
+try:
+    from internet_names_mcp.server import check_domains
+except ImportError as e:
+    print(f"Error: {e}")
+    print()
+    print("Set up the development environment first:")
+    print("    source ./devsetup.sh")
+    sys.exit(1)
+
 import json
 
 # Known taken domains - major sites across various TLDs
@@ -232,7 +245,7 @@ async def main():
         print(f"DISCREPANCIES ({len(discrepancies)})")
         print("=" * 70)
         for d in discrepancies:
-            print(f"  {d['domain']}: RDAP={d['rdap']}, NameSilo={d['namesilo']}")
+            print(f"  ❌ {d['domain']}: RDAP={d['rdap']}, NameSilo={d['namesilo']}")
         print()
 
     # Results table
@@ -261,7 +274,7 @@ async def main():
         marker = ""
         if rdap_display != "ERROR" and namesilo_display != "ERROR":
             if rdap_display != namesilo_display:
-                marker = " <-- MISMATCH"
+                marker = " ❌ MISMATCH"
 
         print(f"{domain:<35} {rdap_display:<15} {namesilo_display:<15}{marker}")
 

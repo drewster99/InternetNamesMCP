@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
-"""Test RDAP domain availability checking with a batch of domains."""
-from server import _check_domains_rdap
-from rdap_bootstrap import get_supported_tlds, refresh_bootstrap
+"""
+Test RDAP domain availability checking with a batch of domains.
+
+Usage:
+    source ./devsetup.sh
+    python test_rdap.py
+"""
+
 import sys
+
+try:
+    from internet_names_mcp.server import _check_domains_rdap
+    from internet_names_mcp.rdap_bootstrap import get_supported_tlds, refresh_bootstrap
+except ImportError as e:
+    print(f"Error: {e}")
+    print()
+    print("Set up the development environment first:")
+    print("    source ./devsetup.sh")
+    sys.exit(1)
 
 DEFAULT_DOMAINS = [
     # Known taken - major companies
@@ -56,7 +71,7 @@ if __name__ == "__main__":
 
     for r in results:
         if r.error:
-            status = f"error ({r.error})"
+            status = f"❌ error ({r.error})"
             error_count += 1
         elif r.available:
             status = "available"

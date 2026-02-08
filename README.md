@@ -4,7 +4,7 @@ An MCP server for checking availability of domain names, social media handles, a
 
 ## Features
 
-- **Domain names** - Check availability via RDAP (free) or NameSilo API (includes pricing)
+- **Domain names** - Check availability via RDAP (free) or NameSilo API (free, but requires API key - responses include domain prices too)
 - **Social media handles** - Instagram, Twitter/X, Reddit, YouTube, TikTok, Twitch, Threads
 - **Subreddits** - Check if subreddit names are available on Reddit
 - **Comprehensive search** - Generate name combinations and check everything at once
@@ -21,10 +21,12 @@ That's it! The server works immediately using RDAP for domain lookups.
 
 ### 2. Optional: Configure NameSilo API (for domain pricing)
 
-The server works without an API key using RDAP. To get domain pricing info, add a free NameSilo API key:
+Checking domain name availability works best if you configure a NameSilo API key. It's free and requires just a basic registration. Otherwise we fall back to using RDAP, which has some significant limitations (see below).
+
+## Set up your NameSilo API key
 
 1. Create an account at [namesilo.com](https://www.namesilo.com) (or log in)
-2. Go to **API Manager**: https://www.namesilo.com/account/api-manager
+2. Go to [API Manager](https://www.namesilo.com/account/api-manager)
 3. Click **Generate New API Key**
 4. Copy the key and run:
 
@@ -32,20 +34,19 @@ The server works without an API key using RDAP. To get domain pricing info, add 
 uvx internet-names-mcp --setup
 ```
 
-Or set via environment variable:
+You'll be prompted to paste your API key.
+On macOS, your API key is stored safely in your iCloud or login keychain as `internet-names-mcp.namesilo`. On other platforms, it's stored in `~/.config/internet-names-mcp/config.json`.
 
-```bash
-export NAMESILO_API_KEY="your-key-here"
-```
+Or, you could set it via environment variable `NAMESILO_API_KEY` in your LLM's MCP server configuration file.
+
 
 ## CLI Commands
 
 ```bash
-uvx internet-names-mcp              # Run the MCP server
-uvx internet-names-mcp --setup      # Configure API keys interactively
-uvx internet-names-mcp --show-config # Show current configuration
-uvx internet-names-mcp --version    # Show version
-uvx internet-names-mcp --help       # Show help
+uvx internet-names-mcp --setup         # Configure API keys interactively
+uvx internet-names-mcp --show-config   # Show current configuration
+uvx internet-names-mcp --version       # Show version
+uvx internet-names-mcp --help          # Show help
 ```
 
 ## Tools
@@ -199,49 +200,90 @@ The `fullyAvailable` list contains names that are available on ALL checked platf
 | `rdap` | Direct registry queries via IANA bootstrap | No | Fast |
 | `namesilo` | NameSilo API (requires API key) | Yes | Fast |
 
+### RDAP Limitations
+
+RDAP is free and requires no API key, but has some limitations:
+
+- **TLD coverage** - Not all top level domains (TLDs) have RDAP servers. Queries for unsupported TLDs will fail. RDAP works for .com, .net, .org, .app, .ai and more. See [deployment.rdap.org](https://deployment.rdap.org) for an up-to-date list (look for 'Yes' in the 'RDAP' column).
+- **No pricing** - RDAP only reports availability, not the cost to register the domain.
+- **False positives** - A domain may appear available via RDAP but actually be reserved or considered "premium" by registrars, making it effectively unavailable or prohibitively expensive to purchase.
+
+For reliable results with pricing, configure a NameSilo API key.
+
 ## Configuration
 
-Configuration is stored in:
-- **macOS/Linux:** `~/.config/internet-names-mcp/config.json`
+API key storage:
+- **macOS:** Keychain (as `internet-names-mcp.namesilo`)
+- **Linux:** `~/.config/internet-names-mcp/config.json`
 - **Windows:** `%APPDATA%/internet-names-mcp/config.json`
 
-API key lookup order:
-1. Config file (set via `--setup`)
+API key lookup order (first match wins):
+1. macOS Keychain (on macOS only)
 2. Environment variable (`NAMESILO_API_KEY`)
-3. macOS Keychain (legacy)
+3. Config file (fallback)
 
 ## Development
 
 ### Local Setup
 
+The `devsetup.sh` script handles virtual environment creation and dependency installation:
+
 ```bash
 git clone <repo-url> InternetNamesMCP
 cd InternetNamesMCP
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-playwright install chromium
+source devsetup.sh          # Creates .venv, activates it, installs dependencies
+playwright install chromium # Required for Twitter/X handle checking
 ```
+
+Options:
+- `source devsetup.sh` - Set up environment (default)
+- `source devsetup.sh --clean` - Delete venv and caches
+- `source devsetup.sh --clean --setup` - Clean rebuild
 
 ### Running Tests
 
 ```bash
-source .venv/bin/activate
-python test_server.py
+source devsetup.sh  # Activate environment first
+
+# Main test suites
+python test_server.py         # Full test suite - offline validation + online API tests
+python test_mcp_interface.py  # Tests via MCP protocol (stdio transport)
+python test_rdap_client.py    # Async RDAP client, rate limiter, batch queries
+
+# Comparison/diagnostic tests
+python test_methods.py        # Compare RDAP vs NameSilo results for discrepancies
+python test_rdap.py           # Quick RDAP-only domain check
 ```
+
+| Test File | Description |
+|-----------|-------------|
+| `test_server.py` | Main test suite covering all MCP tools, edge cases, and API calls |
+| `test_mcp_interface.py` | Tests the server through actual MCP protocol via stdio |
+| `test_rdap_client.py` | Tests async RDAP client, rate limiting, and batch queries |
+| `test_methods.py` | Compares RDAP vs NameSilo to detect availability discrepancies |
+| `test_rdap.py` | Simple RDAP-only test for quick domain availability checks |
 
 ### Project Structure
 
 ```
 ├── src/internet_names_mcp/
-│   ├── __init__.py      # CLI entry point
-│   ├── server.py        # MCP server
-│   ├── config.py        # Configuration management
+│   ├── __init__.py       # CLI entry point
+│   ├── __main__.py       # Module runner
+│   ├── server.py         # MCP server
+│   ├── config.py         # Configuration management
 │   ├── rdap_bootstrap.py # RDAP bootstrap cache
-│   └── rdap_client.py   # Async RDAP client
+│   └── rdap_client.py    # Async RDAP client
 ├── pyproject.toml       # Package configuration
 └── README.md
 ```
+
+### Data Files
+
+**RDAP Bootstrap Cache** - Maps TLDs to their authoritative RDAP servers (auto-downloaded from IANA):
+- **macOS/Linux:** `~/.cache/internet-names-mcp/rdap_bootstrap.json`
+- **Windows:** `%APPDATA%/internet-names-mcp/rdap_bootstrap.json`
+
+The cache is automatically refreshed when expired (default 24h TTL from IANA's Cache-Control headers).
 
 ## Troubleshooting
 
@@ -268,6 +310,10 @@ uvx --from playwright install chromium
 
 Twitter/X checks use a headless browser which can be slow or blocked. If checks consistently fail, Twitter may be rate-limiting or blocking automated access.
 
+## Copyright
+
+Copyright (C) 2026 Nuclear Cyborg Corp
+
 ## License
 
-MIT
+[MIT](license.md)

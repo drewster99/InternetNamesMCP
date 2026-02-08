@@ -6,7 +6,7 @@ This tests the server through its actual MCP interface using stdio transport,
 verifying that the MCP layer works correctly in addition to the underlying functions.
 
 Usage:
-    source .venv/bin/activate
+    source ./devsetup.sh
     python test_mcp_interface.py
 """
 
@@ -16,9 +16,8 @@ import sys
 if sys.version_info < (3, 10):
     print("Error: Python 3.10+ required")
     print()
-    print("Activate the virtual environment:")
-    print("    source .venv/bin/activate")
-    print("    python test_mcp_interface.py")
+    print("Set up the development environment:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 try:
@@ -26,9 +25,8 @@ try:
 except ImportError:
     print("Error: anyio not found")
     print()
-    print("Activate the virtual environment first:")
-    print("    source .venv/bin/activate")
-    print("    python test_mcp_interface.py")
+    print("Set up the development environment first:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 try:
@@ -37,9 +35,8 @@ try:
 except ImportError as e:
     print(f"Error: {e}")
     print()
-    print("Activate the virtual environment first:")
-    print("    source .venv/bin/activate")
-    print("    python test_mcp_interface.py")
+    print("Set up the development environment first:")
+    print("    source ./devsetup.sh")
     sys.exit(1)
 
 import json
@@ -91,7 +88,7 @@ class TestRunner:
         if condition:
             print(f"  ✓ {name}")
         else:
-            print(f"  ✗ {name}")
+            print(f"  ❌ {name}")
             if message:
                 print(f"    → {message}")
 
@@ -132,7 +129,7 @@ class TestRunner:
             print("\nFailed tests:")
             for r in self.results:
                 if not r.passed:
-                    print(f"  ✗ {r.name}")
+                    print(f"  ❌ {r.name}")
                     if r.message:
                         print(f"    → {r.message}")
 
