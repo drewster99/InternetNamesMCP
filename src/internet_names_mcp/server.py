@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 
@@ -270,47 +271,71 @@ def _check_sherlock(username: str, platforms: list[str]) -> dict[str, dict]:
     return results
 
 
-def _check_twitter(username: str) -> dict:
-    """Check Twitter/X username using Playwright."""
+async def _install_chromium() -> tuple[bool, str]:
+    """
+    Install Chromium browser for Playwright.
+
+    Returns (success, message) tuple.
+    """
     try:
-        from playwright.sync_api import sync_playwright
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "playwright", "install", "chromium",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0:
+            return True, "Chromium installed successfully"
+        else:
+            error_output = stderr.decode() or stdout.decode()
+            return False, f"Installation failed: {error_output[:200]}"
+    except FileNotFoundError:
+        return False, "Python executable not found"
+    except Exception as e:
+        return False, f"Installation error: {str(e)[:100]}"
+
+
+async def _check_twitter(username: str, _retry: bool = True) -> dict:
+    """Check Twitter/X username using Playwright (async)."""
+    try:
+        from playwright.async_api import async_playwright
     except ImportError:
         return {"available": None, "error": "playwright not installed. Run: pip install playwright"}
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
             )
-            page = context.new_page()
+            page = await context.new_page()
 
             url = f"https://x.com/{username}"
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(3000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
 
-            empty_state = page.query_selector('[data-testid="empty_state_header_text"]')
+            empty_state = await page.query_selector('[data-testid="empty_state_header_text"]')
 
             if empty_state:
-                text = empty_state.inner_text().replace("'", "'").lower()
+                text = (await empty_state.inner_text()).replace("\u2019", "'").lower()
                 if "doesn't exist" in text:
-                    browser.close()
+                    await browser.close()
                     return {"available": True}
                 elif "suspended" in text:
-                    browser.close()
+                    await browser.close()
                     return {"available": False, "url": url, "note": "suspended"}
 
-            user_name = page.query_selector('[data-testid="UserName"]')
+            user_name = await page.query_selector('[data-testid="UserName"]')
             if user_name:
-                browser.close()
+                await browser.close()
                 return {"available": False, "url": url}
 
-            body_text = page.inner_text("body").replace("'", "'")
-            browser.close()
+            body_text = (await page.inner_text("body")).replace("\u2019", "'")
+            await browser.close()
 
             if "This account doesn't exist" in body_text:
                 return {"available": True}
-            elif f"@{username}" in body_text.lower():
+            elif f"@{username.lower()}" in body_text.lower():
                 return {"available": False, "url": url}
             else:
                 return {"available": None, "error": "Could not determine"}
@@ -318,11 +343,19 @@ def _check_twitter(username: str) -> dict:
     except Exception as e:
         error_str = str(e)
         if "Executable doesn't exist" in error_str or "browserType.launch" in error_str.lower():
-            return {"available": None, "error": "Chromium not installed. Run: playwright install chromium"}
+            if _retry:
+                # Auto-install chromium and retry once
+                success, msg = await _install_chromium()
+                if success:
+                    return await _check_twitter(username, _retry=False)
+                else:
+                    return {"available": None, "error": f"Chromium auto-install failed: {msg}"}
+            else:
+                return {"available": None, "error": "Chromium not installed. Run: playwright install chromium"}
         return {"available": None, "error": error_str[:100]}
 
 
-def _check_handles_internal(username: str, platforms: list[str]) -> dict[str, dict]:
+async def _check_handles_internal(username: str, platforms: list[str]) -> dict[str, dict]:
     """Check username across multiple platforms."""
     results = {}
 
@@ -332,7 +365,7 @@ def _check_handles_internal(username: str, platforms: list[str]) -> dict[str, di
 
     # Check Twitter via Playwright if requested
     if "twitter" in platforms:
-        results["twitter"] = _check_twitter(username)
+        results["twitter"] = await _check_twitter(username)
 
     # Fill in missing platforms
     for p in platforms:
@@ -540,7 +573,7 @@ async def check_domains(
 
 
 @mcp.tool()
-def check_handles(
+async def check_handles(
     username: str,
     platforms: list[str] | None = None,
     onlyReportAvailable: bool = False
@@ -581,7 +614,7 @@ def check_handles(
     if not platforms:
         return json.dumps({"error": "No valid platforms specified"})
 
-    results = _check_handles_internal(username, platforms)
+    results = await _check_handles_internal(username, platforms)
 
     available_list = []
     unavailable_list = []
@@ -813,7 +846,7 @@ async def check_everything(
     unavailable_handles: dict[str, list[dict]] = {}
 
     for basename in domain_successful_basenames:
-        handle_results = _check_handles_internal(basename, platforms)
+        handle_results = await _check_handles_internal(basename, platforms)
 
         available_for_name = []
         unavailable_for_name = []
