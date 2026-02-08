@@ -9,7 +9,7 @@ if [ "$0" = "$BASH_SOURCE" ]; then
     echo "To set up this environment, run it like this:" 1>&2
     echo "" 1>&2
     echo "    source \"$0\"" 1>&2
-    return 1
+    exit 1
 fi
 
 usage()
