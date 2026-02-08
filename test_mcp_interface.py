@@ -739,13 +739,10 @@ async def main_async():
 
     start_time = time.time()
 
-    # Get the path to server.py
-    server_path = Path(__file__).parent / "server.py"
-
-    # Set up server parameters
+    # Set up server parameters - run the package as a module to handle relative imports
     server_params = StdioServerParameters(
         command=sys.executable,  # Use the same Python that's running this test
-        args=[str(server_path)],
+        args=["-m", "internet_names_mcp"],
         cwd=str(Path(__file__).parent),
     )
 
