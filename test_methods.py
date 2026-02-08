@@ -230,11 +230,11 @@ async def main():
         if rdap_errors:
             print(f"\nRDAP errors ({len(rdap_errors)}):")
             for domain, error in rdap_errors:
-                print(f"  {domain}: {error}")
+                print(f"  ❌ {domain}: {error}")
         if namesilo_errors:
             print(f"\nNameSilo errors ({len(namesilo_errors)}):")
             for domain, error in namesilo_errors:
-                print(f"  {domain}: {error}")
+                print(f"  ❌ {domain}: {error}")
         print()
 
     # Compare results and show discrepancies

@@ -273,6 +273,18 @@ Options:
 - `source devsetup.sh --clean` - Delete venv and caches
 - `source devsetup.sh --clean --setup` - Clean rebuild
 
+### API Key Configuration (Development)
+
+When running from source, use the module directly instead of `uvx`:
+
+```bash
+source devsetup.sh  # Activate environment first
+
+python -m internet_names_mcp --setup       # Configure API keys interactively
+python -m internet_names_mcp --show-config # Show current configuration and key source
+python -m internet_names_mcp --version     # Show version
+```
+
 ### Running Tests
 
 ```bash

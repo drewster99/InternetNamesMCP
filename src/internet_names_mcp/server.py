@@ -504,15 +504,10 @@ async def check_domains(
                 entry["price"] = r.price
             available_list.append(entry)
         elif r.error:
-            # Errors are separate from unavailable when using RDAP
-            if use_rdap:
-                errors_list.append({
-                    "domain": r.domain,
-                    "error": r.error,
-                })
-            else:
-                # NameSilo errors go to unavailable for backward compatibility
-                unavailable_list.append(r.domain)
+            errors_list.append({
+                "domain": r.domain,
+                "error": r.error,
+            })
         else:
             unavailable_list.append(r.domain)
 
@@ -775,9 +770,12 @@ async def check_everything(
         else:
             domain_results = await _check_domains_rdap_async(all_domains)
 
-    # Group results by basename
+    # Group results by basename and collect errors
     basename_results: dict[str, list[DomainResult]] = {}
+    domain_errors = []
     for r in domain_results:
+        if r.error:
+            domain_errors.append({"domain": r.domain, "error": r.error})
         # Extract basename from domain
         basename = r.domain.rsplit(".", 1)[0]
         if basename not in basename_results:
@@ -847,6 +845,8 @@ async def check_everything(
 
     if not onlyReportAvailable:
         response["unavailableHandles"] = unavailable_handles
+        if domain_errors:
+            response["domainErrors"] = domain_errors
 
     # Build summary
     summary = {}
