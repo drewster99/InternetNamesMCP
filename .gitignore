@@ -49,3 +49,6 @@ test-results/
 *.log
 output/
 results/
+
+# RDAP bootstrap cache
+.rdap_bootstrap_cache.json

@@ -11,6 +11,7 @@ Environment variables:
     NAMESILO_API_KEY - Required for domain checks
 """
 
+import asyncio
 import json
 import os
 import subprocess
@@ -20,8 +21,18 @@ from dataclasses import dataclass
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from rdap_bootstrap import get_rdap_server
+from rdap_client import (
+    DomainStatus,
+    check_domains_async,
+)
+
+# Server version
+VERSION = "0.0.1"
+
 # Initialize the MCP server
 mcp = FastMCP("internet-names")
+mcp._mcp_server.version = VERSION
 
 # =============================================================================
 # Constants
@@ -56,7 +67,7 @@ SHERLOCK_PLATFORM_MAP = {
 
 
 # =============================================================================
-# Domain Checking (NameSilo)
+# Domain Checking (NameSilo + RDAP fallback)
 # =============================================================================
 
 @dataclass
@@ -75,6 +86,57 @@ def _get_api_key() -> str | None:
         return get_namesilo_key()
     except ImportError:
         return os.environ.get("NAMESILO_API_KEY")
+
+
+
+
+async def _check_domains_rdap_async(
+    domains: list[str],
+    max_retries: int = 3,
+) -> list[DomainResult]:
+    """
+    Check domain availability via RDAP protocol using async parallel execution.
+
+    Returns DomainResult objects with proper status categorization.
+    Errors (timeout, rate_limit) are NOT marked as unavailable.
+    """
+    rdap_results = await check_domains_async(domains, max_retries=max_retries)
+
+    # Convert rdap_client.DomainResult to local DomainResult for backward compatibility
+    results = []
+    for r in rdap_results:
+        if r.status == DomainStatus.AVAILABLE:
+            results.append(DomainResult(domain=r.domain, available=True))
+        elif r.status == DomainStatus.UNAVAILABLE:
+            results.append(DomainResult(domain=r.domain, available=False))
+        elif r.status == DomainStatus.UNSUPPORTED:
+            results.append(DomainResult(
+                domain=r.domain,
+                available=False,
+                error=r.error_message,
+            ))
+        else:  # ERROR status - keep error info for response
+            results.append(DomainResult(
+                domain=r.domain,
+                available=False,
+                error=r.error_message,
+            ))
+
+    return results
+
+
+def _check_domains_rdap(
+    domains: list[str],
+    delay: float = 1.0,  # Deprecated, ignored
+    max_retries: int = 3,
+) -> list[DomainResult]:
+    """
+    Synchronous wrapper for RDAP domain checking.
+
+    Note: The 'delay' parameter is deprecated and ignored.
+    Rate limiting is now handled per-host automatically.
+    """
+    return asyncio.run(_check_domains_rdap_async(domains, max_retries=max_retries))
 
 
 def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResult]:
@@ -354,9 +416,10 @@ def get_supported_socials() -> str:
 
 
 @mcp.tool()
-def check_domains(
+async def check_domains(
     names: list[str],
     tlds: list[str] | None = None,
+    method: str = "rdap",
     onlyReportAvailable: bool = False
 ) -> str:
     """
@@ -367,20 +430,25 @@ def check_domains(
                If a name contains a dot, it's treated as a full domain.
                Otherwise, it's combined with each TLD.
         tlds: List of TLDs to check (default: com, io, ai, co, app, dev, net, org)
+        method: Lookup method - "rdap" (default, uses IANA bootstrap for direct registry queries),
+                "namesilo" (requires API key, includes pricing), or "auto" (uses namesilo if
+                API key available, otherwise rdap)
         onlyReportAvailable: If true, only return available domains in response
 
     Returns:
-        JSON with available domains, unavailable domains (unless onlyReportAvailable), and summary.
+        JSON with available domains, unavailable domains (unless onlyReportAvailable),
+        errors (for timeout/rate_limit issues), and summary.
     """
     if not names:
         return json.dumps({"error": "No domain names provided"})
 
-    api_key = _get_api_key()
-    if not api_key:
-        return json.dumps({"error": "No API key configured. Run: python setup.py --set-api-key"})
-
     if tlds is None:
         tlds = DEFAULT_TLDS
+
+    # Validate method
+    method = method.lower()
+    if method not in ("rdap", "namesilo", "auto"):
+        return json.dumps({"error": f"Invalid method '{method}'. Use 'rdap', 'namesilo', or 'auto'"})
 
     # Expand names with TLDs, filtering out empty/whitespace names
     domains = []
@@ -400,20 +468,44 @@ def check_domains(
     if not domains:
         return json.dumps({"error": "No valid domain names after expansion"})
 
-    results = _check_domains_internal(domains, api_key)
+    # Select lookup method
+    api_key = _get_api_key()
+    use_rdap = False
+    if method == "namesilo":
+        if not api_key:
+            return json.dumps({"error": "NameSilo API key not configured"})
+        results = _check_domains_internal(domains, api_key)
+    elif method == "rdap":
+        use_rdap = True
+        results = await _check_domains_rdap_async(domains)
+    else:  # auto
+        if api_key:
+            results = _check_domains_internal(domains, api_key)
+        else:
+            use_rdap = True
+            results = await _check_domains_rdap_async(domains)
 
-    # Build response
+    # Build response with proper error categorization
     available_list = []
     unavailable_list = []
+    errors_list = []
 
     for r in results:
-        if r.error:
-            unavailable_list.append(r.domain)
-        elif r.available:
+        if r.available:
             entry = {"domain": r.domain}
             if r.price is not None:
                 entry["price"] = r.price
             available_list.append(entry)
+        elif r.error:
+            # Errors are separate from unavailable when using RDAP
+            if use_rdap:
+                errors_list.append({
+                    "domain": r.domain,
+                    "error": r.error,
+                })
+            else:
+                # NameSilo errors go to unavailable for backward compatibility
+                unavailable_list.append(r.domain)
         else:
             unavailable_list.append(r.domain)
 
@@ -423,6 +515,8 @@ def check_domains(
 
     if not onlyReportAvailable:
         response["unavailable"] = unavailable_list
+        if errors_list:
+            response["errors"] = errors_list
 
     # Build summary
     summary = {}
@@ -558,12 +652,14 @@ def check_subreddits(
 
 
 @mcp.tool()
-def check_everything(
+async def check_everything(
     components: list[str],
     tlds: list[str] | None = None,
     platforms: list[str] | None = None,
+    method: str = "rdap",
     requireAllTLDsAvailable: bool = False,
-    onlyReportAvailable: bool = False
+    onlyReportAvailable: bool = False,
+    alsoIncludeHyphens: bool = False
 ) -> str:
     """
     Comprehensive check across domains and social media.
@@ -576,8 +672,10 @@ def check_everything(
                     Generates: single components + concatenations in both orders
         tlds: TLDs to check (default: com, net, org, io, ai)
         platforms: Social platforms to check (default: all)
+        method: Domain lookup method - "rdap" (default), "namesilo", or "auto"
         requireAllTLDsAvailable: If true, a name must be available in ALL TLDs to pass
         onlyReportAvailable: If true, omit unavailable items from response
+        alsoIncludeHyphens: If true, also check hyphenated versions (e.g., "red-sweater")
 
     Returns:
         JSON with available domains, successful basenames, available/unavailable handles, and summary.
@@ -587,6 +685,11 @@ def check_everything(
 
     if not tlds:
         return json.dumps({"error": "No TLDs specified"})
+
+    # Validate method
+    method = method.lower()
+    if method not in ("rdap", "namesilo", "auto"):
+        return json.dumps({"error": f"Invalid method '{method}'. Use 'rdap', 'namesilo', or 'auto'"})
 
     if platforms is None:
         platforms = SUPPORTED_PLATFORMS.copy()
@@ -608,25 +711,30 @@ def check_everything(
 
     # Add concatenations (both orders for 2+ components)
     if len(components) >= 2:
-        # All components concatenated in given order
-        concat = "".join(c.lower().strip() for c in components)
-        if concat:  # Only add if not empty
+        # Clean components for joining
+        clean_components = [c.lower().strip() for c in components if c.strip()]
+
+        if clean_components:
+            # All components concatenated in given order
+            concat = "".join(clean_components)
             generated_names.add(concat)
 
-        # Reverse order
-        reverse_concat = "".join(c.lower().strip() for c in reversed(components))
-        if reverse_concat:  # Only add if not empty
+            # Reverse order
+            reverse_concat = "".join(reversed(clean_components))
             generated_names.add(reverse_concat)
+
+            # Hyphenated versions (only for domains, not handles)
+            if alsoIncludeHyphens:
+                hyphen_concat = "-".join(clean_components)
+                generated_names.add(hyphen_concat)
+
+                hyphen_reverse = "-".join(reversed(clean_components))
+                generated_names.add(hyphen_reverse)
 
     generated_names = list(generated_names)
 
     if not generated_names:
         return json.dumps({"error": "No valid name components provided"})
-
-    # Check domains
-    api_key = _get_api_key()
-    if not api_key:
-        return json.dumps({"error": "No API key configured. Run: python setup.py --set-api-key"})
 
     # Build all domain combinations
     all_domains = []
@@ -634,7 +742,19 @@ def check_everything(
         for tld in tlds:
             all_domains.append(f"{name}.{tld}")
 
-    domain_results = _check_domains_internal(all_domains, api_key)
+    # Select lookup method
+    api_key = _get_api_key()
+    if method == "namesilo":
+        if not api_key:
+            return json.dumps({"error": "NameSilo API key not configured"})
+        domain_results = _check_domains_internal(all_domains, api_key)
+    elif method == "rdap":
+        domain_results = await _check_domains_rdap_async(all_domains)
+    else:  # auto
+        if api_key:
+            domain_results = _check_domains_internal(all_domains, api_key)
+        else:
+            domain_results = await _check_domains_rdap_async(all_domains)
 
     # Group results by basename
     basename_results: dict[str, list[DomainResult]] = {}

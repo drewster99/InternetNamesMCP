@@ -1,6 +1,15 @@
+"""
+RDAP domain availability checking.
+
+This functionality is now integrated into server.py.
+This file is kept for reference/standalone testing.
+"""
+
 import requests
 
-def rdap_available(domain: str, timeout=5) -> bool:
+
+def rdap_available(domain: str, timeout: int = 5) -> bool:
+    """Check if a domain is available using RDAP protocol."""
     url = f"https://rdap.org/domain/{domain}"
     r = requests.get(url, timeout=timeout, headers={"Accept": "application/rdap+json"})
     if r.status_code == 404:
@@ -10,4 +19,6 @@ def rdap_available(domain: str, timeout=5) -> bool:
     # Other statuses can happen (429 rate limit, 403, 5xx). Treat as unknown.
     raise RuntimeError(f"RDAP unexpected status {r.status_code}: {r.text[:200]}")
 
-print(rdap_available("example.com"))
+
+if __name__ == "__main__":
+    print(f"example.com available: {rdap_available('example.com')}")
