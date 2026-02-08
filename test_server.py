@@ -359,7 +359,7 @@ def run_online_tests(runner: TestRunner):
     })
 
     # Check likely available domain via RDAP
-    result = run_sync(check_domains([unique_name], tlds=["com", "net"]))
+    result = run_sync(check_domains([unique_name], tlds=["com", "net"], method="rdap"))
     data = runner.test_json("rdap: unique name returns valid structure", result, {
         "has available": lambda d: "available" in d,
         "available is list": lambda d: isinstance(d["available"], list),

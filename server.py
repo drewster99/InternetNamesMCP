@@ -419,7 +419,7 @@ def get_supported_socials() -> str:
 async def check_domains(
     names: list[str],
     tlds: list[str] | None = None,
-    method: str = "rdap",
+    method: str = "auto",
     onlyReportAvailable: bool = False
 ) -> str:
     """
@@ -430,9 +430,9 @@ async def check_domains(
                If a name contains a dot, it's treated as a full domain.
                Otherwise, it's combined with each TLD.
         tlds: List of TLDs to check (default: com, io, ai, co, app, dev, net, org)
-        method: Lookup method - "rdap" (default, uses IANA bootstrap for direct registry queries),
-                "namesilo" (requires API key, includes pricing), or "auto" (uses namesilo if
-                API key available, otherwise rdap)
+        method: Lookup method - "auto" (default, uses namesilo if API key available, otherwise rdap),
+                "rdap" (uses IANA bootstrap for direct registry queries),
+                "namesilo" (requires API key, includes pricing)
         onlyReportAvailable: If true, only return available domains in response
 
     Returns:
@@ -656,7 +656,7 @@ async def check_everything(
     components: list[str],
     tlds: list[str] | None = None,
     platforms: list[str] | None = None,
-    method: str = "rdap",
+    method: str = "auto",
     requireAllTLDsAvailable: bool = False,
     onlyReportAvailable: bool = False,
     alsoIncludeHyphens: bool = False
@@ -672,7 +672,7 @@ async def check_everything(
                     Generates: single components + concatenations in both orders
         tlds: TLDs to check (default: com, net, org, io, ai)
         platforms: Social platforms to check (default: all)
-        method: Domain lookup method - "rdap" (default), "namesilo", or "auto"
+        method: Domain lookup method - "auto" (default), "rdap", or "namesilo"
         requireAllTLDsAvailable: If true, a name must be available in ALL TLDs to pass
         onlyReportAvailable: If true, omit unavailable items from response
         alsoIncludeHyphens: If true, also check hyphenated versions (e.g., "red-sweater")
