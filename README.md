@@ -13,46 +13,30 @@ An MCP server for checking availability of domain names, social media handles, a
 
 ### 1. Add to Claude Code
 
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "internet-names": {
-      "command": "uvx",
-      "args": ["internet-names-mcp"]
-    }
-  }
-}
+```bash
+claude mcp add --scope user internet-names-mcp uvx internet-names-mcp
 ```
 
 That's it! The server works immediately using RDAP for domain lookups.
 
 ### 2. Optional: Configure NameSilo API (for domain pricing)
 
-Run the setup command:
+The server works without an API key using RDAP. To get domain pricing info, add a free NameSilo API key:
+
+1. Create an account at [namesilo.com](https://www.namesilo.com) (or log in)
+2. Go to **API Manager**: https://www.namesilo.com/account/api-manager
+3. Click **Generate New API Key**
+4. Copy the key and run:
 
 ```bash
 uvx internet-names-mcp --setup
 ```
 
-Or set the API key via environment variable:
+Or set via environment variable:
 
-```json
-{
-  "mcpServers": {
-    "internet-names": {
-      "command": "uvx",
-      "args": ["internet-names-mcp"],
-      "env": {
-        "NAMESILO_API_KEY": "your-key-here"
-      }
-    }
-  }
-}
+```bash
+export NAMESILO_API_KEY="your-key-here"
 ```
-
-Get a free API key at: https://www.namesilo.com/account/api-manager
 
 ## CLI Commands
 

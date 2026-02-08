@@ -49,34 +49,16 @@ Usage:
 Configuration:
     The server works out of the box using RDAP for domain lookups (no API key required).
 
-    For NameSilo integration (includes pricing), set your API key:
-    1. Run: internet-names-mcp --setup
-    2. Or set environment variable: NAMESILO_API_KEY=your-key
-    3. Or add to Claude Code config:
-       {{
-         "mcpServers": {{
-           "internet-names": {{
-             "command": "uvx",
-             "args": ["internet-names-mcp"],
-             "env": {{
-               "NAMESILO_API_KEY": "your-key"
-             }}
-           }}
-         }}
-       }}
+    For NameSilo integration (includes domain pricing):
+    1. Create account at namesilo.com
+    2. Go to API Manager: https://www.namesilo.com/account/api-manager
+    3. Click "Generate New API Key"
+    4. Run: uvx internet-names-mcp --setup
 
-    Get a free NameSilo API key at: https://www.namesilo.com/account/api-manager
+    Or set environment variable: export NAMESILO_API_KEY=your-key
 
 Claude Code Setup:
-    Add to ~/.claude/settings.json:
-    {{
-      "mcpServers": {{
-        "internet-names": {{
-          "command": "uvx",
-          "args": ["internet-names-mcp"]
-        }}
-      }}
-    }}
+    claude mcp add --scope user internet-names-mcp uvx internet-names-mcp
 """)
 
 
@@ -109,7 +91,13 @@ def run_setup():
     # Prompt for API key
     print()
     print("NameSilo API key (optional - enables domain pricing)")
-    print("Get one free at: https://www.namesilo.com/account/api-manager")
+    print()
+    print("To get a free API key:")
+    print("  1. Create account at namesilo.com (or log in)")
+    print("  2. Go to: https://www.namesilo.com/account/api-manager")
+    print("  3. Click 'Generate New API Key'")
+    print("  4. Copy and paste the key below")
+    print()
     print("Press Enter to skip (RDAP will be used for domain lookups)")
     print()
 
@@ -127,17 +115,8 @@ def run_setup():
     print()
     print("Setup complete!")
     print()
-    print("Add this to ~/.claude/settings.json:")
-    print("""
-{
-  "mcpServers": {
-    "internet-names": {
-      "command": "uvx",
-      "args": ["internet-names-mcp"]
-    }
-  }
-}
-""")
+    print("Add to Claude Code with:")
+    print("  claude mcp add --scope user internet-names-mcp uvx internet-names-mcp")
 
 
 def show_config():
