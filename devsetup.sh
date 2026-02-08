@@ -57,7 +57,7 @@ if [ $doClean -eq 1 ]; then
     echo "Cleaning..."
     if [ -x .venv/bin/playwright ]; then
         echo "Uninstalling Playwright browsers"
-        .venv/bin/playwright uninstall --all
+        .venv/bin/playwright uninstall --all 2>/dev/null || true
     fi
     if [ -d ~/Library/Caches/ms-playwright ]; then
         echo "Deleting Playwright browser cache"
