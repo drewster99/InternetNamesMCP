@@ -308,6 +308,14 @@ python test_rdap.py           # Quick RDAP-only domain check
 | `test_methods.py` | Compares RDAP vs NameSilo to detect availability discrepancies |
 | `test_rdap.py` | Simple RDAP-only test for quick domain availability checks |
 
+### Interactive Testing
+
+Use MCP Inspector for interactive debugging with a web UI:
+
+```bash
+npx @modelcontextprotocol/inspector .venv/bin/python -m internet_names_mcp
+```
+
 ### Project Structure
 
 ```
