@@ -1,6 +1,6 @@
 [project]
 name = "internet-names-mcp"
-version = "0.1.3"
+version = "0.1.4"
 description = "MCP server for checking availability of domain names, social media handles, and subreddits"
 readme = "README.md"
 license = "MIT"

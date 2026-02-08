@@ -4,7 +4,7 @@ Internet Names MCP Server
 An MCP server for checking availability of domain names, social media handles, and subreddits.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 
 def main():
