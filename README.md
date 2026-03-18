@@ -99,7 +99,7 @@ Note: `subreddit` is checked via `check_subreddits()`, not `check_handles()`.
 
 ---
 
-### check_domains(names, tlds?, method?, onlyReportAvailable?)
+### check_domains(names, tlds?, method?, only_report_available?)
 
 Check domain name availability and pricing.
 
@@ -109,7 +109,7 @@ Check domain name availability and pricing.
 | `names` | list[str] | required | Domain names or base names to check |
 | `tlds` | list[str] | `["com", "io", "ai", "co", "app", "dev", "net", "org"]` | TLDs to check |
 | `method` | str | `"auto"` | `"auto"`, `"rdap"`, or `"namesilo"` |
-| `onlyReportAvailable` | bool | `false` | If true, omit unavailable domains from response |
+| `only_report_available` | bool | `false` | If true, omit unavailable domains from response |
 
 If a name contains a dot, it's treated as a full domain. Otherwise, it's combined with each TLD.
 
@@ -130,7 +130,7 @@ If a name contains a dot, it's treated as a full domain. Otherwise, it's combine
 
 ---
 
-### check_handles(username, platforms?, onlyReportAvailable?)
+### check_handles(username, platforms?, only_report_available?)
 
 Check social media handle availability across platforms.
 
@@ -139,7 +139,7 @@ Check social media handle availability across platforms.
 |------|------|---------|-------------|
 | `username` | str | required | The username/handle to check |
 | `platforms` | list[str] | all platforms | Platforms to check |
-| `onlyReportAvailable` | bool | `false` | If true, omit unavailable handles from response |
+| `only_report_available` | bool | `false` | If true, omit unavailable handles from response |
 
 Supported platforms: `instagram`, `twitter`, `reddit`, `youtube`, `tiktok`, `twitch`, `threads`
 
@@ -158,7 +158,7 @@ Note: Twitter/X checking uses a headless browser and takes ~4 seconds.
 
 ---
 
-### check_subreddits(names, onlyReportAvailable?)
+### check_subreddits(names, only_report_available?)
 
 Check subreddit name availability on Reddit.
 
@@ -166,7 +166,7 @@ Check subreddit name availability on Reddit.
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `names` | list[str] | required | Subreddit names to check (with or without r/ prefix) |
-| `onlyReportAvailable` | bool | `false` | If true, omit unavailable subreddits from response |
+| `only_report_available` | bool | `false` | If true, omit unavailable subreddits from response |
 
 **Response:**
 ```json
@@ -181,7 +181,7 @@ Check subreddit name availability on Reddit.
 
 ---
 
-### check_everything(components, tlds?, platforms?, method?, requireAllTLDsAvailable?, onlyReportAvailable?, alsoIncludeHyphens?)
+### check_everything(components, tlds?, platforms?, method?, require_all_tlds_available?, only_report_available?, also_include_hyphens?)
 
 Comprehensive check across domains and social media. Generates name combinations from components, checks domains first (fast), then checks social handles for names that pass the domain check.
 
@@ -192,9 +192,9 @@ Comprehensive check across domains and social media. Generates name combinations
 | `tlds` | list[str] | `["com", "net", "org", "io", "ai"]` | TLDs to check |
 | `platforms` | list[str] | all platforms | Social platforms to check |
 | `method` | str | `"auto"` | `"auto"`, `"rdap"`, or `"namesilo"` |
-| `requireAllTLDsAvailable` | bool | `false` | If true, name must be available in ALL TLDs to pass |
-| `onlyReportAvailable` | bool | `false` | If true, omit unavailable items from response |
-| `alsoIncludeHyphens` | bool | `false` | If true, also check hyphenated versions |
+| `require_all_tlds_available` | bool | `false` | If true, name must be available in ALL TLDs to qualify for handle checking |
+| `only_report_available` | bool | `false` | If true, omit unavailable items from response |
+| `also_include_hyphens` | bool | `false` | If true, also check hyphenated versions |
 
 **Name Generation:**
 From components `["red", "sweater"]`, generates:
