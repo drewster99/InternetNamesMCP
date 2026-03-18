@@ -584,7 +584,9 @@ async def check_handles(
     """
     Check social media handle/username availability across platforms.
 
-    Includes X/Twitter checking (which takes ~4 seconds).
+    This tool may be long-running (30–90 seconds), especially when checking
+    many platforms. Twitter/X checking alone takes ~4 seconds via headless browser;
+    other platforms are checked in parallel via Sherlock.
 
     Args:
         username: The username/handle to check
@@ -707,6 +709,10 @@ async def check_everything(
 ) -> str:
     """
     Comprehensive check across domains and social media.
+
+    This tool may be long-running. Domain checks are fast, but social handle
+    checking (via Sherlock and headless browser for Twitter/X) can take 30–90
+    seconds depending on the number of names and platforms checked.
 
     Generates name combinations from components and checks domains first (fast),
     then checks social media handles for names that pass the domain check.
