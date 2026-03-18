@@ -700,10 +700,10 @@ async def check_everything(
     components: list[str],
     tlds: list[str] | None = None,
     platforms: list[str] | None = None,
-    method: str = "auto",
-    requireAllTLDsAvailable: bool = False,
+    method: Literal["auto", "rdap", "namesilo"] = "auto",
+    require_all_tlds_available: bool = False,
     only_report_available: bool = False,
-    alsoIncludeHyphens: bool = False
+    also_include_hyphens: bool = False
 ) -> str:
     """
     Comprehensive check across domains and social media.
@@ -714,12 +714,17 @@ async def check_everything(
     Args:
         components: Name components to combine (e.g., ["red", "sweater"])
                     Generates: single components + concatenations in both orders
-        tlds: TLDs to check (default: com, net, org, io, ai)
-        platforms: Social platforms to check (default: all)
-        method: Domain lookup method - "auto" (default), "rdap", or "namesilo"
-        requireAllTLDsAvailable: If true, a name must be available in ALL TLDs to pass
+        tlds: Array of TLD strings to check. Each element is a single TLD without
+              a leading dot. Example: ["com", "io", "ai"] — NOT "com\nio\nai" or "com,io,ai".
+              Default: ["com", "net", "org", "io", "ai"]
+        platforms: Social platforms to check (default: all).
+                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads
+        method: Domain lookup method - "auto" (default, uses namesilo if API key available,
+                otherwise rdap), "rdap" (direct registry queries), "namesilo" (requires API key)
+        require_all_tlds_available: If true, a name must be available in ALL specified TLDs
+                                    to qualify for social handle checking
         only_report_available: If true, omit unavailable items from response
-        alsoIncludeHyphens: If true, also check hyphenated versions (e.g., "red-sweater")
+        also_include_hyphens: If true, also check hyphenated versions (e.g., "red-sweater")
 
     Returns:
         JSON with available domains, successful basenames, available/unavailable handles, and summary.
@@ -774,7 +779,7 @@ async def check_everything(
             generated_names.add(reverse_concat)
 
             # Hyphenated versions (only for domains, not handles)
-            if alsoIncludeHyphens:
+            if also_include_hyphens:
                 hyphen_concat = "-".join(clean_components)
                 generated_names.add(hyphen_concat)
 
@@ -825,7 +830,7 @@ async def check_everything(
     for basename, results in basename_results.items():
         available_for_basename = [r for r in results if r.available]
 
-        if requireAllTLDsAvailable:
+        if require_all_tlds_available:
             # Must have all TLDs available
             if len(available_for_basename) == len(tlds):
                 domain_successful_basenames.append(basename)
