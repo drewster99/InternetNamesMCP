@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -459,8 +460,8 @@ def get_supported_socials() -> str:
 async def check_domains(
     names: list[str],
     tlds: list[str] | None = None,
-    method: str = "auto",
-    onlyReportAvailable: bool = False
+    method: Literal["auto", "rdap", "namesilo"] = "auto",
+    only_report_available: bool = False
 ) -> str:
     """
     Check domain name availability and pricing.
@@ -469,14 +470,16 @@ async def check_domains(
         names: List of domain names or base names to check.
                If a name contains a dot, it's treated as a full domain.
                Otherwise, it's combined with each TLD.
-        tlds: List of TLDs to check (default: com, io, ai, co, app, dev, net, org)
+        tlds: Array of TLD strings to check. Each element is a single TLD without
+              a leading dot. Example: ["com", "io", "ai"] — NOT "com\nio\nai" or "com,io,ai".
+              Default: ["com", "io", "ai", "co", "app", "dev", "net", "org"]
         method: Lookup method - "auto" (default, uses namesilo if API key available, otherwise rdap),
                 "rdap" (uses IANA bootstrap for direct registry queries),
                 "namesilo" (requires API key, includes pricing)
-        onlyReportAvailable: If true, only return available domains in response
+        only_report_available: If true, only return available domains in response
 
     Returns:
-        JSON with available domains, unavailable domains (unless onlyReportAvailable),
+        JSON with available domains, unavailable domains (unless only_report_available),
         errors (for timeout/rate_limit issues), and summary.
     """
     if not names:
@@ -548,7 +551,7 @@ async def check_domains(
         "available": available_list,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailable"] = unavailable_list
         if errors_list:
             response["errors"] = errors_list
@@ -576,7 +579,7 @@ async def check_domains(
 async def check_handles(
     username: str,
     platforms: list[str] | None = None,
-    onlyReportAvailable: bool = False
+    only_report_available: bool = False
 ) -> str:
     """
     Check social media handle/username availability across platforms.
@@ -587,10 +590,10 @@ async def check_handles(
         username: The username/handle to check
         platforms: List of platforms to check (default: all supported platforms)
                    Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads
-        onlyReportAvailable: If true, only return available handles in response
+        only_report_available: If true, only return available handles in response
 
     Returns:
-        JSON with available platforms, unavailable platforms (unless onlyReportAvailable).
+        JSON with available platforms, unavailable platforms (unless only_report_available).
     """
     if not username or not username.strip():
         return json.dumps({"error": "No username provided"})
@@ -639,7 +642,7 @@ async def check_handles(
         "available": available_list,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailable"] = unavailable_list
 
     return json.dumps(response)
@@ -648,17 +651,17 @@ async def check_handles(
 @mcp.tool()
 def check_subreddits(
     names: list[str],
-    onlyReportAvailable: bool = False
+    only_report_available: bool = False
 ) -> str:
     """
     Check subreddit name availability on Reddit.
 
     Args:
         names: List of subreddit names to check (with or without r/ prefix)
-        onlyReportAvailable: If true, only return available subreddits in response
+        only_report_available: If true, only return available subreddits in response
 
     Returns:
-        JSON with available subreddits, unavailable subreddits (unless onlyReportAvailable).
+        JSON with available subreddits, unavailable subreddits (unless only_report_available).
     """
     if not names:
         return json.dumps({"error": "No subreddit names provided"})
@@ -686,7 +689,7 @@ def check_subreddits(
         "available": available_list,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailable"] = unavailable_list
 
     return json.dumps(response)
