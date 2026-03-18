@@ -561,15 +561,15 @@ def run_online_tests(runner: TestRunner):
         platforms=["instagram", "youtube"]  # Skip twitter for speed
     ))
     data = runner.test_json("check_everything returns correct structure", result, {
-        "has availableDomains": lambda d: "availableDomains" in d,
-        "has domainSuccessfulBasenames": lambda d: "domainSuccessfulBasenames" in d,
-        "has availableHandles": lambda d: "availableHandles" in d,
+        "has available_domains": lambda d: "available_domains" in d,
+        "has domain_successful_basenames": lambda d: "domain_successful_basenames" in d,
+        "has available_handles": lambda d: "available_handles" in d,
     })
 
     if data:
         # Verify structure is correct regardless of availability
-        basenames = data.get("domainSuccessfulBasenames", [])
-        runner.test("domainSuccessfulBasenames is list", isinstance(basenames, list))
+        basenames = data.get("domain_successful_basenames", [])
+        runner.test("domain_successful_basenames is list", isinstance(basenames, list))
 
         # If we got basenames, verify they look reasonable
         if basenames:
@@ -586,7 +586,7 @@ def run_online_tests(runner: TestRunner):
         require_all_tlds_available=True
     ))
     data = runner.test_json("require_all_tlds_available works", result, {
-        "has structure": lambda d: "availableDomains" in d,
+        "has structure": lambda d: "available_domains" in d,
     })
 
     # Test only_report_available
@@ -596,8 +596,8 @@ def run_online_tests(runner: TestRunner):
         platforms=["instagram"],
         only_report_available=True
     ))
-    runner.test_json("only_report_available omits unavailableHandles", result, {
-        "no unavailableHandles": lambda d: "unavailableHandles" not in d,
+    runner.test_json("only_report_available omits unavailable_handles", result, {
+        "no unavailable_handles": lambda d: "unavailable_handles" not in d,
     })
 
     # Test summary generation
@@ -607,14 +607,14 @@ def run_online_tests(runner: TestRunner):
         platforms=["instagram", "youtube"]
     ))
     data = runner.test_json("check_everything generates summary", result, {
-        "has summary": lambda d: "summary" in d or len(d.get("availableDomains", [])) == 0,
+        "has summary": lambda d: "summary" in d or len(d.get("available_domains", [])) == 0,
     })
 
     if data and data.get("summary"):
         summary = data["summary"]
-        if "cheapestDomain" in summary:
-            runner.test("cheapestDomain has domain and price",
-                        "domain" in summary["cheapestDomain"] and "price" in summary["cheapestDomain"])
+        if "cheapest_domain" in summary:
+            runner.test("cheapest_domain has domain and price",
+                        "domain" in summary["cheapest_domain"] and "price" in summary["cheapest_domain"])
 
     # Test also_include_hyphens - use unique components to ensure availability
     hyphen_comp1 = unique_name[:6]
@@ -626,11 +626,11 @@ def run_online_tests(runner: TestRunner):
         also_include_hyphens=True
     ))
     data = runner.test_json("also_include_hyphens generates hyphenated names", result, {
-        "has structure": lambda d: "availableDomains" in d or "domainSuccessfulBasenames" in d,
+        "has structure": lambda d: "available_domains" in d or "domain_successful_basenames" in d,
     })
 
     if data:
-        basenames = data.get("domainSuccessfulBasenames", [])
+        basenames = data.get("domain_successful_basenames", [])
         # With also_include_hyphens=True, we should have hyphenated basenames if any are available
         if basenames:
             has_hyphen = any("-" in b for b in basenames)
@@ -648,11 +648,11 @@ def run_online_tests(runner: TestRunner):
         also_include_hyphens=False
     ))
     data = runner.test_json("also_include_hyphens=False excludes hyphenated names", result, {
-        "has structure": lambda d: "domainSuccessfulBasenames" in d,
+        "has structure": lambda d: "domain_successful_basenames" in d,
     })
 
     if data:
-        basenames = data.get("domainSuccessfulBasenames", [])
+        basenames = data.get("domain_successful_basenames", [])
         no_hyphens = not any("-" in b for b in basenames)
         runner.test("no hyphenated basenames when also_include_hyphens=False", no_hyphens,
                     f"basenames={basenames}")

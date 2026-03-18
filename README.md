@@ -204,26 +204,26 @@ From components `["red", "sweater"]`, generates:
 **Response:**
 ```json
 {
-  "availableDomains": [
+  "available_domains": [
     {"domain": "redsweater.com", "price": 17.29},
     {"domain": "redsweater.io", "price": 34.99}
   ],
-  "domainSuccessfulBasenames": ["redsweater", "sweaterred"],
-  "availableHandles": {
+  "domain_successful_basenames": ["redsweater", "sweaterred"],
+  "available_handles": {
     "redsweater": ["instagram", "twitter", "youtube"],
     "sweaterred": ["instagram", "tiktok"]
   },
-  "unavailableHandles": {
+  "unavailable_handles": {
     "redsweater": [{"platform": "reddit", "url": "..."}]
   },
   "summary": {
-    "fullyAvailable": ["sweaterred"],
-    "cheapestDomain": {"domain": "redsweater.com", "price": 17.29}
+    "fully_available": ["sweaterred"],
+    "cheapest_domain": {"domain": "redsweater.com", "price": 17.29}
   }
 }
 ```
 
-The `fullyAvailable` list contains names that are available on ALL checked platforms.
+The `fully_available` list contains names that are available on ALL checked platforms.
 
 ## Domain Lookup Methods
 

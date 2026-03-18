@@ -586,7 +586,7 @@ async def check_handles(
 
     This tool may be long-running (30–90 seconds), especially when checking
     many platforms. Twitter/X checking alone takes ~4 seconds via headless browser;
-    other platforms are checked in parallel via Sherlock.
+    other platforms are checked in parallel.
 
     Args:
         username: The username/handle to check
@@ -711,8 +711,9 @@ async def check_everything(
     Comprehensive check across domains and social media.
 
     This tool may be long-running. Domain checks are fast, but social handle
-    checking (via Sherlock and headless browser for Twitter/X) can take 30–90
-    seconds depending on the number of names and platforms checked.
+    checking (via headless browser for Twitter/X and parallel requests for other
+    platforms) can take 30–90 seconds depending on the number of names and
+    platforms checked.
 
     Generates name combinations from components and checks domains first (fast),
     then checks social media handles for names that pass the domain check.
@@ -885,15 +886,15 @@ async def check_everything(
 
     # Build response
     response = {
-        "availableDomains": available_domains,
-        "domainSuccessfulBasenames": domain_successful_basenames,
-        "availableHandles": available_handles,
+        "available_domains": available_domains,
+        "domain_successful_basenames": domain_successful_basenames,
+        "available_handles": available_handles,
     }
 
     if not only_report_available:
-        response["unavailableHandles"] = unavailable_handles
+        response["unavailable_handles"] = unavailable_handles
         if domain_errors:
-            response["domainErrors"] = domain_errors
+            response["domain_errors"] = domain_errors
 
     # Build summary
     summary = {}
@@ -906,14 +907,14 @@ async def check_everything(
                 fully_available.append(basename)
 
     if fully_available:
-        summary["fullyAvailable"] = fully_available
+        summary["fully_available"] = fully_available
 
     # Find cheapest domain
     if available_domains:
         with_price = [d for d in available_domains if "price" in d]
         if with_price:
             cheapest = min(with_price, key=lambda x: x["price"])
-            summary["cheapestDomain"] = cheapest
+            summary["cheapest_domain"] = cheapest
 
     if summary:
         response["summary"] = summary

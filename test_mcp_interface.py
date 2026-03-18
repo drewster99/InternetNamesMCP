@@ -618,15 +618,15 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
     })
     text = extract_text(result)
     data = runner.test_json("check_everything returns correct structure", text, {
-        "has availableDomains": lambda d: "availableDomains" in d,
-        "has domainSuccessfulBasenames": lambda d: "domainSuccessfulBasenames" in d,
-        "has availableHandles": lambda d: "availableHandles" in d,
+        "has available_domains": lambda d: "available_domains" in d,
+        "has domain_successful_basenames": lambda d: "domain_successful_basenames" in d,
+        "has available_handles": lambda d: "available_handles" in d,
     })
 
     if data:
         # Verify structure is correct regardless of availability
-        basenames = data.get("domainSuccessfulBasenames", [])
-        runner.test("domainSuccessfulBasenames is list", isinstance(basenames, list))
+        basenames = data.get("domain_successful_basenames", [])
+        runner.test("domain_successful_basenames is list", isinstance(basenames, list))
 
         # If we got basenames, verify they look reasonable
         if basenames:
@@ -644,7 +644,7 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
     })
     text = extract_text(result)
     runner.test_json("require_all_tlds_available works", text, {
-        "has structure": lambda d: "availableDomains" in d,
+        "has structure": lambda d: "available_domains" in d,
     })
 
     # Test only_report_available
@@ -655,8 +655,8 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
         "only_report_available": True,
     })
     text = extract_text(result)
-    runner.test_json("only_report_available omits unavailableHandles", text, {
-        "no unavailableHandles": lambda d: "unavailableHandles" not in d,
+    runner.test_json("only_report_available omits unavailable_handles", text, {
+        "no unavailable_handles": lambda d: "unavailable_handles" not in d,
     })
 
     # Test summary generation
@@ -667,15 +667,15 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
     })
     text = extract_text(result)
     data = runner.test_json("check_everything generates summary", text, {
-        "has summary": lambda d: "summary" in d or len(d.get("availableDomains", [])) == 0,
+        "has summary": lambda d: "summary" in d or len(d.get("available_domains", [])) == 0,
     })
 
     if data and data.get("summary"):
         summary = data["summary"]
-        if "cheapestDomain" in summary:
+        if "cheapest_domain" in summary:
             runner.test(
-                "cheapestDomain has domain and price",
-                "domain" in summary["cheapestDomain"] and "price" in summary["cheapestDomain"],
+                "cheapest_domain has domain and price",
+                "domain" in summary["cheapest_domain"] and "price" in summary["cheapest_domain"],
             )
 
     # Test also_include_hyphens - use unique components to ensure availability
@@ -689,11 +689,11 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
     })
     text = extract_text(result)
     data = runner.test_json("also_include_hyphens generates hyphenated names", text, {
-        "has structure": lambda d: "availableDomains" in d or "domainSuccessfulBasenames" in d,
+        "has structure": lambda d: "available_domains" in d or "domain_successful_basenames" in d,
     })
 
     if data:
-        basenames = data.get("domainSuccessfulBasenames", [])
+        basenames = data.get("domain_successful_basenames", [])
         # With also_include_hyphens=True, we should have more basenames than without
         # Expected: comp1, comp2, comp1+comp2, comp2+comp1, comp1-comp2, comp2-comp1 = 6
         # But some may be unavailable. Just check for hyphenated ones if any basenames exist
@@ -717,11 +717,11 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
     })
     text = extract_text(result)
     data = runner.test_json("also_include_hyphens=False excludes hyphenated names", text, {
-        "has structure": lambda d: "domainSuccessfulBasenames" in d,
+        "has structure": lambda d: "domain_successful_basenames" in d,
     })
 
     if data:
-        basenames = data.get("domainSuccessfulBasenames", [])
+        basenames = data.get("domain_successful_basenames", [])
         no_hyphens = not any("-" in b for b in basenames)
         runner.test(
             "no hyphenated basenames when also_include_hyphens=False",
