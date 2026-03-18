@@ -244,25 +244,25 @@ def run_offline_tests(runner: TestRunner):
     runner.section("check_handles - edge cases")
 
     # Empty username
-    result = check_handles("")
+    result = run_sync(check_handles(""))
     runner.test_json("empty username returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
     # Whitespace username
-    result = check_handles("   ")
+    result = run_sync(check_handles("   "))
     runner.test_json("whitespace username returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
     # Invalid platforms only
-    result = check_handles("testuser", platforms=["invalid", "fake"])
+    result = run_sync(check_handles("testuser", platforms=["invalid", "fake"]))
     runner.test_json("invalid platforms returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
     # Mixed valid/invalid platforms - should work with valid ones
-    result = check_handles("testuser", platforms=["instagram", "invalid"])
+    result = run_sync(check_handles("testuser", platforms=["instagram", "invalid"]))
     runner.test_json("mixed platforms uses valid ones", result, {
         "has available key": lambda d: "available" in d,
         "no error": lambda d: "error" not in d,
@@ -450,7 +450,7 @@ def run_online_tests(runner: TestRunner):
     runner.section("check_handles - API tests (all platforms)")
 
     # Check a known taken handle across all platforms
-    result = check_handles("elonmusk")
+    result = run_sync(check_handles("elonmusk"))
     data = runner.test_json("elonmusk check returns valid structure", result, {
         "has available": lambda d: "available" in d,
         "has unavailable": lambda d: "unavailable" in d,
@@ -490,14 +490,14 @@ def run_online_tests(runner: TestRunner):
                 runner.test(f"{platform}: {status}", False, "unexpected status")
 
     # Check likely available handle
-    result = check_handles(unique_name, platforms=["instagram", "youtube"])
+    result = run_sync(check_handles(unique_name, platforms=["instagram", "youtube"]))
     runner.test_json(f"{unique_name} is likely available", result, {
         "has available": lambda d: "available" in d,
         "available has entries": lambda d: len(d["available"]) > 0,
     })
 
     # Test only_report_available
-    result = check_handles("billgates", platforms=["instagram"], only_report_available=True)
+    result = run_sync(check_handles("billgates", platforms=["instagram"], only_report_available=True))
     runner.test_json("only_report_available omits unavailable", result, {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
