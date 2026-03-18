@@ -702,7 +702,7 @@ async def check_everything(
     platforms: list[str] | None = None,
     method: str = "auto",
     requireAllTLDsAvailable: bool = False,
-    onlyReportAvailable: bool = False,
+    only_report_available: bool = False,
     alsoIncludeHyphens: bool = False
 ) -> str:
     """
@@ -718,7 +718,7 @@ async def check_everything(
         platforms: Social platforms to check (default: all)
         method: Domain lookup method - "auto" (default), "rdap", or "namesilo"
         requireAllTLDsAvailable: If true, a name must be available in ALL TLDs to pass
-        onlyReportAvailable: If true, omit unavailable items from response
+        only_report_available: If true, omit unavailable items from response
         alsoIncludeHyphens: If true, also check hyphenated versions (e.g., "red-sweater")
 
     Returns:
@@ -879,7 +879,7 @@ async def check_everything(
         "availableHandles": available_handles,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailableHandles"] = unavailable_handles
         if domain_errors:
             response["domainErrors"] = domain_errors
