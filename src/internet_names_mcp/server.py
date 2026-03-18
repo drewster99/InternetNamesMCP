@@ -34,7 +34,7 @@ from .rdap_client import (
 )
 
 # Server version
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 
 # Initialize the MCP server
 mcp = FastMCP("internet-names")
