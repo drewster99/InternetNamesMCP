@@ -244,25 +244,25 @@ def run_offline_tests(runner: TestRunner):
     runner.section("check_handles - edge cases")
 
     # Empty username
-    result = check_handles("")
+    result = run_sync(check_handles(""))
     runner.test_json("empty username returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
     # Whitespace username
-    result = check_handles("   ")
+    result = run_sync(check_handles("   "))
     runner.test_json("whitespace username returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
     # Invalid platforms only
-    result = check_handles("testuser", platforms=["invalid", "fake"])
+    result = run_sync(check_handles("testuser", platforms=["invalid", "fake"]))
     runner.test_json("invalid platforms returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
     # Mixed valid/invalid platforms - should work with valid ones
-    result = check_handles("testuser", platforms=["instagram", "invalid"])
+    result = run_sync(check_handles("testuser", platforms=["instagram", "invalid"]))
     runner.test_json("mixed platforms uses valid ones", result, {
         "has available key": lambda d: "available" in d,
         "no error": lambda d: "error" not in d,
@@ -421,9 +421,9 @@ def run_online_tests(runner: TestRunner):
     # =========================================================================
     runner.section("check_domains - additional tests")
 
-    # Test onlyReportAvailable
-    result = run_sync(check_domains(["google"], tlds=["com"], onlyReportAvailable=True))
-    runner.test_json("onlyReportAvailable omits unavailable", result, {
+    # Test only_report_available
+    result = run_sync(check_domains(["google"], tlds=["com"], only_report_available=True))
+    runner.test_json("only_report_available omits unavailable", result, {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
 
@@ -450,7 +450,7 @@ def run_online_tests(runner: TestRunner):
     runner.section("check_handles - API tests (all platforms)")
 
     # Check a known taken handle across all platforms
-    result = check_handles("elonmusk")
+    result = run_sync(check_handles("elonmusk"))
     data = runner.test_json("elonmusk check returns valid structure", result, {
         "has available": lambda d: "available" in d,
         "has unavailable": lambda d: "unavailable" in d,
@@ -490,15 +490,15 @@ def run_online_tests(runner: TestRunner):
                 runner.test(f"{platform}: {status}", False, "unexpected status")
 
     # Check likely available handle
-    result = check_handles(unique_name, platforms=["instagram", "youtube"])
+    result = run_sync(check_handles(unique_name, platforms=["instagram", "youtube"]))
     runner.test_json(f"{unique_name} is likely available", result, {
         "has available": lambda d: "available" in d,
         "available has entries": lambda d: len(d["available"]) > 0,
     })
 
-    # Test onlyReportAvailable
-    result = check_handles("billgates", platforms=["instagram"], onlyReportAvailable=True)
-    runner.test_json("onlyReportAvailable omits unavailable", result, {
+    # Test only_report_available
+    result = run_sync(check_handles("billgates", platforms=["instagram"], only_report_available=True))
+    runner.test_json("only_report_available omits unavailable", result, {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
 
@@ -541,9 +541,9 @@ def run_online_tests(runner: TestRunner):
         ),
     })
 
-    # Test onlyReportAvailable
-    result = check_subreddits(["programming"], onlyReportAvailable=True)
-    runner.test_json("onlyReportAvailable omits unavailable", result, {
+    # Test only_report_available
+    result = check_subreddits(["programming"], only_report_available=True)
+    runner.test_json("only_report_available omits unavailable", result, {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
 
@@ -561,15 +561,15 @@ def run_online_tests(runner: TestRunner):
         platforms=["instagram", "youtube"]  # Skip twitter for speed
     ))
     data = runner.test_json("check_everything returns correct structure", result, {
-        "has availableDomains": lambda d: "availableDomains" in d,
-        "has domainSuccessfulBasenames": lambda d: "domainSuccessfulBasenames" in d,
-        "has availableHandles": lambda d: "availableHandles" in d,
+        "has available_domains": lambda d: "available_domains" in d,
+        "has domain_successful_basenames": lambda d: "domain_successful_basenames" in d,
+        "has available_handles": lambda d: "available_handles" in d,
     })
 
     if data:
         # Verify structure is correct regardless of availability
-        basenames = data.get("domainSuccessfulBasenames", [])
-        runner.test("domainSuccessfulBasenames is list", isinstance(basenames, list))
+        basenames = data.get("domain_successful_basenames", [])
+        runner.test("domain_successful_basenames is list", isinstance(basenames, list))
 
         # If we got basenames, verify they look reasonable
         if basenames:
@@ -578,26 +578,26 @@ def run_online_tests(runner: TestRunner):
             # All domains might be taken - that's okay for this test
             runner.test("(skipped) basename content check", True, "no available basenames")
 
-    # Test requireAllTLDsAvailable
+    # Test require_all_tlds_available
     result = run_sync(check_everything(
         components=[unique_name],
         tlds=["com", "io"],
         platforms=["instagram"],
-        requireAllTLDsAvailable=True
+        require_all_tlds_available=True
     ))
-    data = runner.test_json("requireAllTLDsAvailable works", result, {
-        "has structure": lambda d: "availableDomains" in d,
+    data = runner.test_json("require_all_tlds_available works", result, {
+        "has structure": lambda d: "available_domains" in d,
     })
 
-    # Test onlyReportAvailable
+    # Test only_report_available
     result = run_sync(check_everything(
         components=[unique_name],
         tlds=["com"],
         platforms=["instagram"],
-        onlyReportAvailable=True
+        only_report_available=True
     ))
-    runner.test_json("onlyReportAvailable omits unavailableHandles", result, {
-        "no unavailableHandles": lambda d: "unavailableHandles" not in d,
+    runner.test_json("only_report_available omits unavailable_handles", result, {
+        "no unavailable_handles": lambda d: "unavailable_handles" not in d,
     })
 
     # Test summary generation
@@ -607,31 +607,31 @@ def run_online_tests(runner: TestRunner):
         platforms=["instagram", "youtube"]
     ))
     data = runner.test_json("check_everything generates summary", result, {
-        "has summary": lambda d: "summary" in d or len(d.get("availableDomains", [])) == 0,
+        "has summary": lambda d: "summary" in d or len(d.get("available_domains", [])) == 0,
     })
 
     if data and data.get("summary"):
         summary = data["summary"]
-        if "cheapestDomain" in summary:
-            runner.test("cheapestDomain has domain and price",
-                        "domain" in summary["cheapestDomain"] and "price" in summary["cheapestDomain"])
+        if "cheapest_domain" in summary:
+            runner.test("cheapest_domain has domain and price",
+                        "domain" in summary["cheapest_domain"] and "price" in summary["cheapest_domain"])
 
-    # Test alsoIncludeHyphens - use unique components to ensure availability
+    # Test also_include_hyphens - use unique components to ensure availability
     hyphen_comp1 = unique_name[:6]
     hyphen_comp2 = unique_name[6:]
     result = run_sync(check_everything(
         components=[hyphen_comp1, hyphen_comp2],
         tlds=["com"],
         platforms=["instagram"],
-        alsoIncludeHyphens=True
+        also_include_hyphens=True
     ))
-    data = runner.test_json("alsoIncludeHyphens generates hyphenated names", result, {
-        "has structure": lambda d: "availableDomains" in d or "domainSuccessfulBasenames" in d,
+    data = runner.test_json("also_include_hyphens generates hyphenated names", result, {
+        "has structure": lambda d: "available_domains" in d or "domain_successful_basenames" in d,
     })
 
     if data:
-        basenames = data.get("domainSuccessfulBasenames", [])
-        # With alsoIncludeHyphens=True, we should have hyphenated basenames if any are available
+        basenames = data.get("domain_successful_basenames", [])
+        # With also_include_hyphens=True, we should have hyphenated basenames if any are available
         if basenames:
             has_hyphen = any("-" in b for b in basenames)
             runner.test("hyphenated names in basenames", has_hyphen,
@@ -640,21 +640,21 @@ def run_online_tests(runner: TestRunner):
             # All domains taken - just pass since we can't verify
             runner.test("(skipped) hyphenated names check", True, "no available domains")
 
-    # Test alsoIncludeHyphens=False (default) does NOT include hyphens
+    # Test also_include_hyphens=False (default) does NOT include hyphens
     result = run_sync(check_everything(
         components=["abc", "xyz"],
         tlds=["com"],
         platforms=["instagram"],
-        alsoIncludeHyphens=False
+        also_include_hyphens=False
     ))
-    data = runner.test_json("alsoIncludeHyphens=False excludes hyphenated names", result, {
-        "has structure": lambda d: "domainSuccessfulBasenames" in d,
+    data = runner.test_json("also_include_hyphens=False excludes hyphenated names", result, {
+        "has structure": lambda d: "domain_successful_basenames" in d,
     })
 
     if data:
-        basenames = data.get("domainSuccessfulBasenames", [])
+        basenames = data.get("domain_successful_basenames", [])
         no_hyphens = not any("-" in b for b in basenames)
-        runner.test("no hyphenated basenames when alsoIncludeHyphens=False", no_hyphens,
+        runner.test("no hyphenated basenames when also_include_hyphens=False", no_hyphens,
                     f"basenames={basenames}")
 
 

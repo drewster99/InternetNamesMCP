@@ -37,9 +37,10 @@ env/
 playwright-report/
 test-results/
 
-# IDE
+# IDE / AI tools
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -33,7 +34,7 @@ from .rdap_client import (
 )
 
 # Server version
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 
 # Initialize the MCP server
 mcp = FastMCP("internet-names")
@@ -459,8 +460,8 @@ def get_supported_socials() -> str:
 async def check_domains(
     names: list[str],
     tlds: list[str] | None = None,
-    method: str = "auto",
-    onlyReportAvailable: bool = False
+    method: Literal["auto", "rdap", "namesilo"] = "auto",
+    only_report_available: bool = False
 ) -> str:
     """
     Check domain name availability and pricing.
@@ -469,14 +470,16 @@ async def check_domains(
         names: List of domain names or base names to check.
                If a name contains a dot, it's treated as a full domain.
                Otherwise, it's combined with each TLD.
-        tlds: List of TLDs to check (default: com, io, ai, co, app, dev, net, org)
+        tlds: Array of TLD strings to check. Each element is a single TLD without
+              a leading dot. Example: ["com", "io", "ai"] — NOT "com\nio\nai" or "com,io,ai".
+              Default: ["com", "io", "ai", "co", "app", "dev", "net", "org"]
         method: Lookup method - "auto" (default, uses namesilo if API key available, otherwise rdap),
                 "rdap" (uses IANA bootstrap for direct registry queries),
                 "namesilo" (requires API key, includes pricing)
-        onlyReportAvailable: If true, only return available domains in response
+        only_report_available: If true, only return available domains in response
 
     Returns:
-        JSON with available domains, unavailable domains (unless onlyReportAvailable),
+        JSON with available domains, unavailable domains (unless only_report_available),
         errors (for timeout/rate_limit issues), and summary.
     """
     if not names:
@@ -548,7 +551,7 @@ async def check_domains(
         "available": available_list,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailable"] = unavailable_list
         if errors_list:
             response["errors"] = errors_list
@@ -576,21 +579,23 @@ async def check_domains(
 async def check_handles(
     username: str,
     platforms: list[str] | None = None,
-    onlyReportAvailable: bool = False
+    only_report_available: bool = False
 ) -> str:
     """
     Check social media handle/username availability across platforms.
 
-    Includes X/Twitter checking (which takes ~4 seconds).
+    This tool may be long-running (30–90 seconds), especially when checking
+    many platforms. Twitter/X checking alone takes ~4 seconds via headless browser;
+    other platforms are checked in parallel.
 
     Args:
         username: The username/handle to check
         platforms: List of platforms to check (default: all supported platforms)
                    Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads
-        onlyReportAvailable: If true, only return available handles in response
+        only_report_available: If true, only return available handles in response
 
     Returns:
-        JSON with available platforms, unavailable platforms (unless onlyReportAvailable).
+        JSON with available platforms, unavailable platforms (unless only_report_available).
     """
     if not username or not username.strip():
         return json.dumps({"error": "No username provided"})
@@ -639,7 +644,7 @@ async def check_handles(
         "available": available_list,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailable"] = unavailable_list
 
     return json.dumps(response)
@@ -648,17 +653,17 @@ async def check_handles(
 @mcp.tool()
 def check_subreddits(
     names: list[str],
-    onlyReportAvailable: bool = False
+    only_report_available: bool = False
 ) -> str:
     """
     Check subreddit name availability on Reddit.
 
     Args:
         names: List of subreddit names to check (with or without r/ prefix)
-        onlyReportAvailable: If true, only return available subreddits in response
+        only_report_available: If true, only return available subreddits in response
 
     Returns:
-        JSON with available subreddits, unavailable subreddits (unless onlyReportAvailable).
+        JSON with available subreddits, unavailable subreddits (unless only_report_available).
     """
     if not names:
         return json.dumps({"error": "No subreddit names provided"})
@@ -686,7 +691,7 @@ def check_subreddits(
         "available": available_list,
     }
 
-    if not onlyReportAvailable:
+    if not only_report_available:
         response["unavailable"] = unavailable_list
 
     return json.dumps(response)
@@ -697,13 +702,18 @@ async def check_everything(
     components: list[str],
     tlds: list[str] | None = None,
     platforms: list[str] | None = None,
-    method: str = "auto",
-    requireAllTLDsAvailable: bool = False,
-    onlyReportAvailable: bool = False,
-    alsoIncludeHyphens: bool = False
+    method: Literal["auto", "rdap", "namesilo"] = "auto",
+    require_all_tlds_available: bool = False,
+    only_report_available: bool = False,
+    also_include_hyphens: bool = False
 ) -> str:
     """
     Comprehensive check across domains and social media.
+
+    This tool may be long-running. Domain checks are fast, but social handle
+    checking (via headless browser for Twitter/X and parallel requests for other
+    platforms) can take 30–90 seconds depending on the number of names and
+    platforms checked.
 
     Generates name combinations from components and checks domains first (fast),
     then checks social media handles for names that pass the domain check.
@@ -711,12 +721,17 @@ async def check_everything(
     Args:
         components: Name components to combine (e.g., ["red", "sweater"])
                     Generates: single components + concatenations in both orders
-        tlds: TLDs to check (default: com, net, org, io, ai)
-        platforms: Social platforms to check (default: all)
-        method: Domain lookup method - "auto" (default), "rdap", or "namesilo"
-        requireAllTLDsAvailable: If true, a name must be available in ALL TLDs to pass
-        onlyReportAvailable: If true, omit unavailable items from response
-        alsoIncludeHyphens: If true, also check hyphenated versions (e.g., "red-sweater")
+        tlds: Array of TLD strings to check. Each element is a single TLD without
+              a leading dot. Example: ["com", "io", "ai"] — NOT "com\nio\nai" or "com,io,ai".
+              Default: ["com", "net", "org", "io", "ai"]
+        platforms: Social platforms to check (default: all).
+                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads
+        method: Domain lookup method - "auto" (default, uses namesilo if API key available,
+                otherwise rdap), "rdap" (direct registry queries), "namesilo" (requires API key)
+        require_all_tlds_available: If true, a name must be available in ALL specified TLDs
+                                    to qualify for social handle checking
+        only_report_available: If true, omit unavailable items from response
+        also_include_hyphens: If true, also check hyphenated versions (e.g., "red-sweater")
 
     Returns:
         JSON with available domains, successful basenames, available/unavailable handles, and summary.
@@ -771,7 +786,7 @@ async def check_everything(
             generated_names.add(reverse_concat)
 
             # Hyphenated versions (only for domains, not handles)
-            if alsoIncludeHyphens:
+            if also_include_hyphens:
                 hyphen_concat = "-".join(clean_components)
                 generated_names.add(hyphen_concat)
 
@@ -822,7 +837,7 @@ async def check_everything(
     for basename, results in basename_results.items():
         available_for_basename = [r for r in results if r.available]
 
-        if requireAllTLDsAvailable:
+        if require_all_tlds_available:
             # Must have all TLDs available
             if len(available_for_basename) == len(tlds):
                 domain_successful_basenames.append(basename)
@@ -871,15 +886,15 @@ async def check_everything(
 
     # Build response
     response = {
-        "availableDomains": available_domains,
-        "domainSuccessfulBasenames": domain_successful_basenames,
-        "availableHandles": available_handles,
+        "available_domains": available_domains,
+        "domain_successful_basenames": domain_successful_basenames,
+        "available_handles": available_handles,
     }
 
-    if not onlyReportAvailable:
-        response["unavailableHandles"] = unavailable_handles
+    if not only_report_available:
+        response["unavailable_handles"] = unavailable_handles
         if domain_errors:
-            response["domainErrors"] = domain_errors
+            response["domain_errors"] = domain_errors
 
     # Build summary
     summary = {}
@@ -892,14 +907,14 @@ async def check_everything(
                 fully_available.append(basename)
 
     if fully_available:
-        summary["fullyAvailable"] = fully_available
+        summary["fully_available"] = fully_available
 
     # Find cheapest domain
     if available_domains:
         with_price = [d for d in available_domains if "price" in d]
         if with_price:
             cheapest = min(with_price, key=lambda x: x["price"])
-            summary["cheapestDomain"] = cheapest
+            summary["cheapest_domain"] = cheapest
 
     if summary:
         response["summary"] = summary
