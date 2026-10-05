@@ -37,7 +37,7 @@ from .social_checks import (
 )
 
 # Server version
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 
 # Initialize the MCP server
 mcp = MCPServer("internet-names", version=VERSION)
