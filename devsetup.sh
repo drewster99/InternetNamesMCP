@@ -12,6 +12,23 @@ if [ "$0" = "$BASH_SOURCE" ]; then
     exit 1
 fi
 
+# Every path below is relative to the current directory, so sourcing this file from
+# anywhere else would clean or install into some other directory's .venv.
+# zsh leaves BASH_SOURCE empty, and its $0 is only the script path while FUNCTION_ARGZERO
+# is set, so ask zsh directly for the file being sourced.
+if [ -n "${ZSH_VERSION-}" ]; then
+    _devsetup_script="${(%):-%x}"
+else
+    _devsetup_script="${BASH_SOURCE[0]}"
+fi
+# -ef alone would also pass for a symlink to this file named devsetup.sh in another directory.
+if [ -L ./devsetup.sh ] || [ ! ./devsetup.sh -ef "$_devsetup_script" ]; then
+    echo "devsetup.sh: error: must be sourced from the directory that contains it, not from $(pwd -P)" 1>&2
+    unset _devsetup_script
+    return 1
+fi
+unset _devsetup_script
+
 usage()
 {
     echo "usage: source $BASH_SOURCE [--clean] [--setup] [--help]" 1>&2
@@ -55,17 +72,14 @@ fi
 # Clean if requested
 if [ $doClean -eq 1 ]; then
     echo "Cleaning..."
-    if [ -x .venv/bin/playwright ]; then
-        echo "Uninstalling Playwright browsers"
-        .venv/bin/playwright uninstall --all 2>/dev/null || true
-    fi
-    if [ -d ~/Library/Caches/ms-playwright ]; then
-        echo "Deleting Playwright browser cache"
-        rm -rf ~/Library/Caches/ms-playwright
-    fi
+    # Playwright browsers live in a cache shared by every Playwright install on this machine,
+    # so clean leaves them alone. Once .venv is gone this project's registration in that cache
+    # dangles, and Playwright itself deletes browsers nothing else uses during the next
+    # `playwright install` run by any project. Until then, a .venv rebuilt at the same path
+    # makes that registration valid again and reuses the browser instead of downloading it.
     if [[ -n "$VIRTUAL_ENV" ]]; then
         echo "Deactivating virtual environment: $VIRTUAL_ENV"
-        type deactivate 2>&1 > /dev/null
+        type deactivate > /dev/null 2>&1
         if [ $? -eq 0 ]; then
             deactivate
         fi
@@ -77,6 +91,10 @@ if [ $doClean -eq 1 ]; then
     if [ -d __pycache__ ]; then
         echo "Deleting __pycache__"
         rm -rf __pycache__
+    fi
+    if [ -d src/internet_names_mcp/__pycache__ ]; then
+        echo "Deleting src/internet_names_mcp/__pycache__"
+        rm -rf src/internet_names_mcp/__pycache__
     fi
     if [ -f .rdap_bootstrap_cache.json ]; then
         echo "Deleting .rdap_bootstrap_cache.json"
@@ -92,12 +110,13 @@ fi
 # set up virtual environment
 if [ ! -d .venv ]; then
     echo python3 -m venv .venv
-    python3 -m venv .venv
+    python3 -m venv .venv || return 1
 fi
 
 # activate virtual environment
 echo source .venv/bin/activate
-source .venv/bin/activate
+# Without an active venv, the pip below would install into whatever Python is first on PATH.
+source .venv/bin/activate || return 1
 
 # Install dependencies (including dev dependencies for build/publish tools)
 echo 'pip install -e ".[dev]"'
