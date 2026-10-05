@@ -218,12 +218,15 @@ Comprehensive check across domains and social media. Generates name combinations
 | `method` | str | `"auto"` | `"auto"`, `"rdap"`, or `"namesilo"` |
 | `require_all_tlds_available` | bool | `false` | If true, name must be available in ALL TLDs to qualify for handle checking |
 | `only_report_available` | bool | `false` | If true, omit unavailable items from response |
-| `also_include_hyphens` | bool | `false` | If true, also check hyphenated versions |
+| `also_include_hyphens` | bool | `false` | If true, also check domains for hyphenated versions (handles are not checked for these) |
 
 **Name Generation:**
 From components `["red", "sweater"]`, generates:
 - Single components: `red`, `sweater`
 - Concatenations: `redsweater`, `sweaterred`
+- With `also_include_hyphens`: `red-sweater`, `sweater-red` (domains only)
+
+Hyphenated versions can appear in `available_domains` and `domain_successful_basenames`, but are never checked for social handles, so they never appear in `available_handles`, `unavailable_handles` or `fully_available`. A hyphen typed into a component (e.g., `["red-sweater"]`) is the caller's own spelling and is checked for handles like any other name.
 
 **Response:**
 ```json

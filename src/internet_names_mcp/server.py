@@ -505,7 +505,10 @@ async def check_everything(
         require_all_tlds_available: If true, a name must be available in ALL specified TLDs
                                     to qualify for social handle checking
         only_report_available: If true, omit unavailable items from response
-        also_include_hyphens: If true, also check hyphenated versions (e.g., "red-sweater")
+        also_include_hyphens: If true, also check domains for hyphenated versions (e.g., "red-sweater").
+                              Hyphenated versions are not checked for social handles, so they
+                              never appear in available_handles, unavailable_handles or
+                              fully_available. Hyphens typed into a component are kept and checked.
 
     Returns:
         JSON with available domains, successful basenames, available/unavailable handles, and summary.
@@ -527,6 +530,7 @@ async def check_everything(
 
     # Generate name combinations from components
     generated_names = set()
+    hyphenated_variants = set()
 
     # Add single components (non-empty after stripping)
     for comp in components:
@@ -548,15 +552,18 @@ async def check_everything(
             reverse_concat = "".join(reversed(clean_components))
             generated_names.add(reverse_concat)
 
-            # Hyphenated versions (only for domains, not handles)
+            # Hyphenated versions are for domains only: many platforms, Instagram included,
+            # reject hyphens in handles, and confirming each rejection spends Instagram's
+            # small signup-check budget.
             if also_include_hyphens:
-                hyphen_concat = "-".join(clean_components)
-                generated_names.add(hyphen_concat)
+                hyphenated_variants.add("-".join(clean_components))
+                hyphenated_variants.add("-".join(reversed(clean_components)))
 
-                hyphen_reverse = "-".join(reversed(clean_components))
-                generated_names.add(hyphen_reverse)
-
-    generated_names = list(generated_names)
+    # Only variants that are not also regular names are domain-only. When a single component
+    # is non-blank its hyphen join is that component, which must still get handle checks.
+    # Regular names keep handle checks even when the caller typed a hyphen into a component.
+    domain_only_names = hyphenated_variants - generated_names
+    generated_names = list(generated_names | hyphenated_variants)
 
     if not generated_names:
         return json.dumps({"error": "No valid name components provided"})
@@ -620,11 +627,12 @@ async def check_everything(
                     available_domains.append(entry)
 
     # Check social handles for successful basenames
+    handle_check_basenames = [b for b in domain_successful_basenames if b not in domain_only_names]
     available_handles: dict[str, list[str]] = {}
     unavailable_handles: dict[str, list[dict]] = {}
 
     async with SocialChecker() as checker:
-        for basename in domain_successful_basenames:
+        for basename in handle_check_basenames:
             handle_results = await checker.check_handles(basename, selected_platforms)
             available_for_name, unavailable_for_name = _split_handle_results(selected_platforms, handle_results)
 
@@ -650,7 +658,7 @@ async def check_everything(
 
     # Find fully available names (available on ALL checked platforms)
     fully_available = []
-    for basename in domain_successful_basenames:
+    for basename in handle_check_basenames:
         if basename in available_handles:
             if len(available_handles[basename]) == len(selected_platforms):
                 fully_available.append(basename)

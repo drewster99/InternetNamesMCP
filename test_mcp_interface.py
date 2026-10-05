@@ -689,6 +689,21 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
             # All domains taken - just pass since we can't verify
             runner.test("(skipped) hyphenated names check", True, "no available domains")
 
+        hyphenated_names = {f"{hyphen_comp1}-{hyphen_comp2}", f"{hyphen_comp2}-{hyphen_comp1}"}
+        handle_checked_names = set(data.get("available_handles", {})) | set(data.get("unavailable_handles", {}))
+        fully_available_names = set(data.get("summary", {}).get("fully_available", []))
+        runner.test(
+            "hyphenated names are not handle-checked",
+            not (hyphenated_names & (handle_checked_names | fully_available_names)),
+            f"handle_checked={sorted(handle_checked_names)}, fully_available={sorted(fully_available_names)}",
+        )
+        plain_names_in_basenames = [b for b in basenames if b not in hyphenated_names]
+        runner.test(
+            "non-hyphenated basenames are still handle-checked",
+            all(b in handle_checked_names for b in plain_names_in_basenames),
+            f"basenames={basenames}, handle_checked={sorted(handle_checked_names)}",
+        )
+
     # Test also_include_hyphens=False (default) does NOT include hyphens
     result = await session.call_tool("check_everything", {
         "components": ["abc", "xyz"],
