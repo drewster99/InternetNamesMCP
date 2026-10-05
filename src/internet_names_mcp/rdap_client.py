@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from enum import Enum
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -249,7 +249,8 @@ class AsyncRDAPClient:
         if not rdap_server.endswith("/"):
             rdap_server += "/"
 
-        url = f"{rdap_server}domain/{domain}"
+        # Quoted so a malformed name can only form a lookup that fails, never a different path or query.
+        url = f"{rdap_server}domain/{quote(domain, safe='')}"
 
         # Get rate limiter for this host
         limiter = await self._registry.get_limiter(rdap_server)

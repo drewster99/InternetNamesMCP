@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Literal
 
 import httpx
+import idna
 from mcp.server.mcpserver import MCPServer
 
 from . import __version__
@@ -79,6 +80,81 @@ SUPPORTED_PLATFORMS = [platform.value for platform in Platform]
 
 # All supported socials (includes subreddit which is checked separately)
 ALL_SOCIALS = SUPPORTED_PLATFORMS + ["subreddit"]
+
+# No supported platform is known to allow a longer handle, and Bluesky places the handle in a
+# hostname label, which DNS limits to 63 characters.
+MAX_USERNAME_LENGTH = 63
+
+
+# =============================================================================
+# Domain Name Validation
+# =============================================================================
+
+class InvalidDomainNameError(ValueError):
+    """A domain name, label or TLD that breaks DNS or IDNA rules."""
+
+
+def _to_ascii_domain(text: str) -> str:
+    """
+    Convert a domain name to the lowercase ASCII (A-label) form that registries expect.
+
+    Raises:
+        InvalidDomainNameError: if the name has empty or over-long labels, characters other
+            than letters, digits and hyphens, misplaced hyphens, or exceeds 253 characters.
+    """
+    try:
+        # The idna package rather than Python's built-in codec, which implements the
+        # obsolete IDNA 2003 rules and lets through characters such as "_" and "/".
+        ascii_name = idna.encode(text, uts46=True).decode("ascii")
+    except idna.IDNAError as e:
+        raise InvalidDomainNameError(str(e)) from e
+    # A trailing dot only marks a name as fully qualified; registries never include it.
+    return ascii_name.removesuffix(".")
+
+
+def _to_unicode_label(text: str) -> str:
+    """
+    Normalize a single label (a name without any TLD) to its lowercase Unicode (U-label) form.
+
+    Raises:
+        InvalidDomainNameError: if the text is not a valid label or contains a dot.
+    """
+    ascii_label = _to_ascii_domain(text)
+    if "." in ascii_label:
+        raise InvalidDomainNameError("Name must be a single label without dots")
+    try:
+        return idna.decode(ascii_label)
+    except idna.IDNAError as e:
+        raise InvalidDomainNameError(str(e)) from e
+
+
+def _normalize_tlds(tlds: list[str]) -> list[str]:
+    """
+    Return the TLDs in lowercase ASCII form, without leading dots or duplicates, in their original order.
+
+    Raises:
+        InvalidDomainNameError: naming every TLD that cannot be used.
+    """
+    normalized: list[str] = []
+    problems: list[str] = []
+    for tld in tlds:
+        # Callers often write a TLD the way it appears in a domain, with its leading dot.
+        candidate = tld.strip().removeprefix(".")
+        try:
+            normalized.append(_to_ascii_domain(candidate))
+        except InvalidDomainNameError as e:
+            problems.append(f"{tld!r} ({e})")
+    if problems:
+        raise InvalidDomainNameError(
+            f"Invalid TLDs: {'; '.join(problems)}. "
+            'Pass each TLD as a separate array element, e.g. ["com", "io"]'
+        )
+    return list(dict.fromkeys(normalized))
+
+
+def _describe_invalid_domains(errors: list[dict]) -> str:
+    """One line naming each invalid domain or name and why it was rejected."""
+    return "; ".join(f"{entry['domain']!r}: {entry['error']}" for entry in errors)
 
 
 # =============================================================================
@@ -430,7 +506,9 @@ async def check_domains(
 
     Returns:
         JSON with available domains, unavailable domains (unless only_report_available),
-        errors (for timeout/rate_limit issues), and summary.
+        errors (for invalid names and timeout/rate_limit issues), and summary.
+        Domains are reported in lowercase ASCII form; internationalized names appear as
+        xn-- A-labels.
     """
     if not names:
         return json.dumps({"error": "No domain names provided"})
@@ -443,22 +521,43 @@ async def check_domains(
     if method not in ("rdap", "namesilo", "auto"):
         return json.dumps({"error": f"Invalid method '{method}'. Use 'rdap', 'namesilo', or 'auto'"})
 
+    try:
+        tlds = _normalize_tlds(tlds)
+    except InvalidDomainNameError as e:
+        return json.dumps({"error": str(e)})
+
     # Expand names with TLDs, filtering out empty/whitespace names
     domains = []
+    invalid_domain_errors = []
     for name in names:
         name = name.strip()
         if not name:
             continue
-        if "." in name:
-            domains.append(name)
-        else:
-            for tld in tlds:
-                domains.append(f"{name}.{tld}")
+        try:
+            ascii_name = _to_ascii_domain(name)
+        except InvalidDomainNameError as e:
+            invalid_domain_errors.append({"domain": name, "error": f"Invalid domain name: {e}"})
+            continue
+        # Dots are judged after IDNA mapping, which turns full-width and ideographic dots into ".".
+        if "." in ascii_name:
+            domains.append(ascii_name)
+            continue
+        for tld in tlds:
+            candidate = f"{ascii_name}.{tld}"
+            # Revalidated because a label and a TLD that are each valid can still form a name over 253 characters.
+            try:
+                domains.append(_to_ascii_domain(candidate))
+            except InvalidDomainNameError as e:
+                invalid_domain_errors.append({"domain": candidate, "error": f"Invalid domain name: {e}"})
 
     # Remove duplicates while preserving order
     domains = list(dict.fromkeys(domains))
 
     if not domains:
+        if invalid_domain_errors:
+            return json.dumps({
+                "error": f"No valid domain names after expansion. {_describe_invalid_domains(invalid_domain_errors)}"
+            })
         return json.dumps({"error": "No valid domain names after expansion"})
 
     # Select lookup method
@@ -479,7 +578,7 @@ async def check_domains(
     # Build response with proper error categorization
     available_list = []
     unavailable_list = []
-    errors_list = []
+    errors_list = list(invalid_domain_errors)
 
     for r in results:
         if r.available:
@@ -537,7 +636,7 @@ async def check_handles(
     on first use (that first call can take a minute or more).
 
     Args:
-        username: The username/handle to check
+        username: The username/handle to check (at most 63 characters)
         platforms: List of platforms to check (default: all supported platforms)
                    Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky,
                    github, snapchat, pinterest, kick, substack
@@ -550,6 +649,10 @@ async def check_handles(
         return json.dumps({"error": "No username provided"})
 
     username = username.strip()
+    if len(username) > MAX_USERNAME_LENGTH:
+        return json.dumps({
+            "error": f"Username is {len(username)} characters; the limit is {MAX_USERNAME_LENGTH}"
+        })
 
     selected_platforms = _parse_platforms(platforms)
     if not selected_platforms:
@@ -659,12 +762,21 @@ async def check_everything(
 
     Returns:
         JSON with available domains, successful basenames, available/unavailable handles, and summary.
+        Names that are not valid domain labels are reported in domain_errors. Domains are
+        reported in lowercase ASCII form (internationalized names as xn-- A-labels); basenames
+        and handles use the normalized Unicode form of each name.
     """
     if tlds is None:
         tlds = ["com", "net", "org", "io", "ai"]
 
     if not tlds:
         return json.dumps({"error": "No TLDs specified"})
+
+    try:
+        # Deduplicated so require_all_tlds_available can compare against the TLD count.
+        tlds = _normalize_tlds(tlds)
+    except InvalidDomainNameError as e:
+        return json.dumps({"error": str(e)})
 
     # Validate method
     method = method.lower()
@@ -706,20 +818,44 @@ async def check_everything(
                 hyphenated_variants.add("-".join(clean_components))
                 hyphenated_variants.add("-".join(reversed(clean_components)))
 
-    # Only variants that are not also regular names are domain-only. When a single component
-    # is non-blank its hyphen join is that component, which must still get handle checks.
-    # Regular names keep handle checks even when the caller typed a hyphen into a component.
-    domain_only_names = hyphenated_variants - generated_names
-    generated_names = list(generated_names | hyphenated_variants)
-
     if not generated_names:
         return json.dumps({"error": "No valid name components provided"})
 
-    # Build all domain combinations
-    all_domains = []
-    for name in generated_names:
+    # Names are compared, handle-checked and reported in normalized form, so that two
+    # spellings of one domain label (such as full-width letters) are a single name.
+    domain_errors = []
+    normalized_by_name: dict[str, str] = {}
+    for name in generated_names | hyphenated_variants:
+        try:
+            normalized_by_name[name] = _to_unicode_label(name)
+        except InvalidDomainNameError as e:
+            domain_errors.append({"domain": name, "error": f"Invalid domain name: {e}"})
+    regular_names = {normalized_by_name[n] for n in generated_names if n in normalized_by_name}
+    variant_names = {normalized_by_name[n] for n in hyphenated_variants if n in normalized_by_name}
+
+    # Only variants that are not also regular names are domain-only. When a single component
+    # is non-blank its hyphen join is that component, which must still get handle checks.
+    # Regular names keep handle checks even when the caller typed a hyphen into a component.
+    domain_only_names = variant_names - regular_names
+
+    # Each domain maps back to its basename because a multi-label TLD such as "co.uk" means
+    # the basename cannot be recovered by splitting the domain.
+    basename_by_domain: dict[str, str] = {}
+    for name in regular_names | variant_names:
         for tld in tlds:
-            all_domains.append(f"{name}.{tld}")
+            candidate = f"{name}.{tld}"
+            # Revalidated because a label and a TLD that are each valid can still form a name over 253 characters.
+            try:
+                basename_by_domain[_to_ascii_domain(candidate)] = name
+            except InvalidDomainNameError as e:
+                domain_errors.append({"domain": candidate, "error": f"Invalid domain name: {e}"})
+
+    if not basename_by_domain:
+        return json.dumps({
+            "error": f"No valid domain names could be generated. {_describe_invalid_domains(domain_errors)}"
+        })
+
+    all_domains = list(basename_by_domain)
 
     # Select lookup method
     # The Keychain lookup runs a subprocess that can block on a Keychain dialog.
@@ -738,12 +874,10 @@ async def check_everything(
 
     # Group results by basename and collect errors
     basename_results: dict[str, list[DomainAvailabilityResult]] = {}
-    domain_errors = []
     for r in domain_results:
         if r.error:
             domain_errors.append({"domain": r.domain, "error": r.error})
-        # Extract basename from domain
-        basename = r.domain.rsplit(".", 1)[0]
+        basename = basename_by_domain[r.domain]
         if basename not in basename_results:
             basename_results[basename] = []
         basename_results[basename].append(r)

@@ -22,6 +22,8 @@ classifiers = [
 dependencies = [
     "mcp>=2.0.0,<3",
     "httpx>=0.25.0",
+    # 3.7 fixed quadratic-time encoding of crafted long input (CVE-2024-3651).
+    "idna>=3.7",
     "playwright>=1.40.0",
 ]
 

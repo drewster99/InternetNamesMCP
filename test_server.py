@@ -68,6 +68,11 @@ from internet_names_mcp.server import (
     check_everything,
     SUPPORTED_PLATFORMS,
     ALL_SOCIALS,
+    MAX_USERNAME_LENGTH,
+    InvalidDomainNameError,
+    _normalize_tlds,
+    _to_ascii_domain,
+    _to_unicode_label,
 )
 from internet_names_mcp import __version__
 
@@ -342,6 +347,60 @@ def run_offline_tests(runner: TestRunner):
     # Invalid platforms only
     result = run_sync(check_everything(["test"], platforms=["invalid"]))
     runner.test_json("invalid platforms returns error", result, {
+        "has error": lambda d: "error" in d,
+    })
+
+    # =========================================================================
+    # Input validation (rejected before any lookup)
+    # =========================================================================
+    runner.section("Input validation")
+
+    def raises_invalid_domain(text: str) -> bool:
+        try:
+            _to_ascii_domain(text)
+        except InvalidDomainNameError:
+            return True
+        return False
+
+    runner.test("domain is lowercased", _to_ascii_domain("Good.COM") == "good.com")
+    runner.test("trailing dot is dropped", _to_ascii_domain("example.com.") == "example.com")
+    runner.test("IDN becomes an A-label", _to_ascii_domain("münchen.de") == "xn--mnchen-3ya.de")
+    for bad_domain in ["a/../x.com", "foo bar.com", "x.com?y", "a..com", "a_b.com", "-a.com", "x" * 64 + ".com"]:
+        runner.test(f"rejects domain {bad_domain[:20]!r}", raises_invalid_domain(bad_domain))
+
+    runner.test("label keeps its Unicode form", _to_unicode_label("München") == "münchen")
+    runner.test("full-width label is normalized", _to_unicode_label("ｒｅｄ") == "red")
+
+    runner.test(
+        "TLDs lose leading dots, whitespace and duplicates",
+        _normalize_tlds([".com", " IO ", "com", ".com"]) == ["com", "io"],
+    )
+    runner.test("multi-label TLD is kept", _normalize_tlds(["co.uk"]) == ["co.uk"])
+
+    result = run_sync(check_domains(["mybrand"], tlds=["com\nio"]))
+    runner.test_json("check_domains rejects a newline-joined TLD", result, {
+        "has error": lambda d: "error" in d,
+        "error names the TLD": lambda d: "com\\nio" in d.get("error", ""),
+    })
+
+    result = run_sync(check_domains(["a/../x.com", "foo bar"], tlds=["com"]))
+    runner.test_json("check_domains with only invalid names returns error", result, {
+        "has error": lambda d: "error" in d,
+        "error names a bad domain": lambda d: "a/../x.com" in d.get("error", ""),
+    })
+
+    result = run_sync(check_everything(["red"], tlds=[".com", "c,om"]))
+    runner.test_json("check_everything rejects an invalid TLD", result, {
+        "has error": lambda d: "error" in d,
+    })
+
+    result = run_sync(check_everything(["a/b", "red.sweater"], tlds=["com"]))
+    runner.test_json("check_everything with only invalid names returns error", result, {
+        "has error": lambda d: "error" in d,
+    })
+
+    result = run_sync(check_handles("x" * (MAX_USERNAME_LENGTH + 1)))
+    runner.test_json("over-long username returns error", result, {
         "has error": lambda d: "error" in d,
     })
 
