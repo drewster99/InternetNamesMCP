@@ -204,4 +204,5 @@ def test_api_key(key: str):
             print(f"✗ API error: {detail}")
 
     except Exception as e:
-        print(f"✗ Test failed: {e}")
+        # Exception text can embed the request URL, which carries the API key.
+        print(f"✗ Test failed: {type(e).__name__}")

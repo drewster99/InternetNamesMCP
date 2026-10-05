@@ -7,10 +7,14 @@ An MCP server for checking availability of:
 - Subreddit names (via Reddit's JSON endpoints in a headless browser session)
 """
 
+import asyncio
 import json
 import logging
+import math
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
+from enum import Enum
 from typing import Literal
 
 import httpx
@@ -18,12 +22,6 @@ from mcp.server.mcpserver import MCPServer
 
 from . import __version__
 from .config import get_namesilo_key
-
-# Suppress httpx request logging by default (shows API keys in URLs)
-# Set INTERNET_NAMES_DEBUG=1 to enable verbose HTTP logging
-if not os.environ.get("INTERNET_NAMES_DEBUG"):
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
 from .rdap_client import (
     DomainStatus,
     check_domains_async,
@@ -35,14 +33,46 @@ from .social_checks import (
     SocialChecker,
 )
 
+
+
+class _RedactKeyQueryParameterFilter(logging.Filter):
+    """Masks `key=` query parameter values in log messages."""
+
+    _KEY_QUERY_PARAMETER_PATTERN = re.compile(r"([?&]key=)[^&\s\"']+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = self._KEY_QUERY_PARAMETER_PATTERN.sub(r"\1[REDACTED]", message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = None
+        return True
+
+
+# NameSilo only accepts the API key as a URL query parameter, so httpx's request log lines
+# would carry it to stderr, which MCP clients save to log files.
+logging.getLogger("httpx").addFilter(_RedactKeyQueryParameterFilter())
+# httpcore logs raw request and response headers (which can echo the URL) through child
+# loggers that the httpx filter does not see, and only ever at DEBUG.
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+# Set INTERNET_NAMES_DEBUG=1 to see httpx request logging
+if not os.environ.get("INTERNET_NAMES_DEBUG"):
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # Initialize the MCP server
 mcp = MCPServer("internet-names", version=__version__)
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Constants
 # =============================================================================
 
 NAMESILO_API_URL = "https://www.namesilo.com/api/checkRegisterAvailability"
+# NameSilo's checkRegisterAvailability reference: "up to 200 can be processed" per request.
+NAMESILO_MAX_DOMAINS_PER_REQUEST = 200
+NAMESILO_SUCCESS_CODE = 300
+NAMESILO_REQUEST_TIMEOUT_SECONDS = 30
 DEFAULT_TLDS = ["com", "io", "ai", "co", "app", "dev", "net", "org"]
 
 SUPPORTED_PLATFORMS = [platform.value for platform in Platform]
@@ -100,86 +130,204 @@ async def _check_domains_rdap_async(
     return results
 
 
-def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainAvailabilityResult]:
-    """Internal function to check domain availability via NameSilo API."""
+class _NameSiloReplySection(Enum):
+    """The reply sections in which NameSilo reports a checked domain."""
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    INVALID = "invalid"
+
+
+def _namesilo_domain_key(domain: str) -> str:
+    """Comparison key used to match requested domains to the names in a NameSilo reply."""
+    # DNS names are case-insensitive and a trailing dot names the same domain, so the reply
+    # may spell a domain differently from the request.
+    return domain.strip().rstrip(".").lower()
+
+
+def _namesilo_section_entries(section: object) -> list[object] | None:
+    """
+    Flatten one reply section into its domain entries.
+
+    Returns None when the section has a shape NameSilo is not known to produce.
+    """
+    # NameSilo's JSON mirrors its XML, so a section holding several domains is a list while a
+    # section holding one is {"domain": ...} (the entry nested under "domain", or the section
+    # being the entry itself). {"domain": [...]} is accepted too because that is the other
+    # common XML-to-JSON rendering. An absent or empty element means no domains.
+    if section is None or section == "" or section == {}:
+        return []
+    if isinstance(section, list):
+        return section
+    if isinstance(section, dict):
+        inner = section.get("domain")
+        if isinstance(inner, list):
+            return inner
+        if isinstance(inner, dict):
+            return [inner]
+        if isinstance(inner, str):
+            return [section]
+    return None
+
+
+def _namesilo_entry_domain(entry: object) -> str | None:
+    """Domain name of one reply entry, or None when the entry has an unknown shape."""
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict) and isinstance(entry.get("domain"), str):
+        return entry["domain"]
+    return None
+
+
+def _namesilo_entry_result(
+    section: _NameSiloReplySection,
+    key: str,
+    entry: object,
+) -> DomainAvailabilityResult:
+    """Convert one reply entry into the result for the domain identified by `key`."""
+    match section:
+        case _NameSiloReplySection.UNAVAILABLE:
+            return DomainAvailabilityResult(domain=key, available=False)
+        case _NameSiloReplySection.INVALID:
+            return DomainAvailabilityResult(domain=key, available=False, error="Invalid domain name")
+        case _NameSiloReplySection.AVAILABLE:
+            raw_price = entry.get("price") if isinstance(entry, dict) else None
+            if raw_price is None:
+                return DomainAvailabilityResult(domain=key, available=True)
+            price: float | None
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError):
+                price = None
+            if price is None or not math.isfinite(price):
+                # Reporting the domain as available with a guessed or dropped price would hide
+                # a malformed reply, so surface it as an error that still says it was available.
+                return DomainAvailabilityResult(
+                    domain=key,
+                    available=False,
+                    error=f"NameSilo reported this domain available with an unparseable price: {raw_price!r}",
+                )
+            return DomainAvailabilityResult(domain=key, available=True, price=price)
+
+
+# NameSilo rejects a request while another from the same API key is still processing (reply
+# code 400), and MCP clients may run several tool calls at once.
+_namesilo_request_lock = asyncio.Lock()
+
+
+async def _check_namesilo_batch(
+    client: httpx.AsyncClient,
+    batch_keys: list[str],
+    api_key: str,
+) -> dict[str, DomainAvailabilityResult]:
+    """
+    Check one request's worth of domains via NameSilo.
+
+    Returns a result for every key in `batch_keys`; domains NameSilo did not report on get an error.
+    """
+    def fail_all(message: str) -> dict[str, DomainAvailabilityResult]:
+        return {key: DomainAvailabilityResult(domain=key, available=False, error=message) for key in batch_keys}
+
     params = {
         "version": "1",
         "type": "json",
         "key": api_key,
-        "domains": ",".join(domains),
+        "domains": ",".join(batch_keys),
     }
 
+    # Error text avoids str(e) because httpx includes the request URL, which carries the API key.
     try:
-        response = httpx.get(NAMESILO_API_URL, params=params, timeout=30)
+        async with _namesilo_request_lock:
+            response = await client.get(NAMESILO_API_URL, params=params)
         response.raise_for_status()
         data = response.json()
-    except httpx.HTTPError as e:
-        return [DomainAvailabilityResult(domain=d, available=False, error=str(e)) for d in domains]
-    except ValueError as e:
-        return [DomainAvailabilityResult(domain=d, available=False, error=f"Invalid JSON: {e}") for d in domains]
+    except httpx.HTTPStatusError as e:
+        return fail_all(f"NameSilo HTTP error {e.response.status_code}")
+    # InvalidURL (e.g. a query string over httpx's length limit) is not an HTTPError subclass.
+    except (httpx.HTTPError, httpx.InvalidURL) as e:
+        return fail_all(f"NameSilo request failed ({type(e).__name__})")
+    except ValueError:
+        return fail_all("NameSilo returned invalid JSON")
 
-    reply = data.get("reply", {})
-    code = reply.get("code")
-    if code and int(code) != 300:
-        detail = reply.get("detail", "Unknown error")
-        return [DomainAvailabilityResult(domain=d, available=False, error=f"API Error {code}: {detail}") for d in domains]
+    reply = data.get("reply") if isinstance(data, dict) else None
+    if not isinstance(reply, dict):
+        return fail_all("NameSilo response has no reply object")
 
-    results = []
+    raw_code = reply.get("code")
+    # NameSilo's JSON mirrors its XML, so the code may arrive as a number or as a string.
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        return fail_all(f"NameSilo reply has an unrecognized code: {raw_code!r}")
+    if code != NAMESILO_SUCCESS_CODE:
+        detail = reply.get("detail") or "Unknown error"
+        return fail_all(f"API Error {code}: {detail}")
 
-    # Process available domains
-    # API returns different formats:
-    # - Multiple: {"available": [{"domain": "foo.com", "price": 17.29}, ...]}
-    # - Single: {"available": {"domain": {"domain": "foo.com", "price": 17.29}}}
-    available = reply.get("available", {})
-    if isinstance(available, dict):
-        # Single domain case - nested under "domain" key
-        inner = available.get("domain")
-        if isinstance(inner, dict):
-            available = [inner]
-        elif isinstance(inner, list):
-            available = inner
-        else:
-            available = []
-    elif not isinstance(available, list):
-        available = []
+    batch_key_set = set(batch_keys)
+    results: dict[str, DomainAvailabilityResult] = {}
+    conflicting_keys: set[str] = set()
+    unmatched_entries: list[str] = []
 
-    for item in available:
-        if isinstance(item, dict):
-            domain = item.get("domain", "")
-            price = item.get("price")
-            results.append(DomainAvailabilityResult(
-                domain=domain,
-                available=True,
-                price=float(price) if price else None
-            ))
+    for section in _NameSiloReplySection:
+        entries = _namesilo_section_entries(reply.get(section.value))
+        if entries is None:
+            return fail_all(f"NameSilo reply has an unrecognized '{section.value}' section")
+        for entry in entries:
+            name = _namesilo_entry_domain(entry)
+            key = _namesilo_domain_key(name) if name is not None else None
+            if key is None or key not in batch_key_set:
+                unmatched_entries.append(repr(entry))
+                continue
+            result = _namesilo_entry_result(section, key, entry)
+            if key in results and results[key] != result:
+                conflicting_keys.add(key)
+            results[key] = result
 
-    # Process unavailable domains
-    unavailable = reply.get("unavailable", {})
-    if isinstance(unavailable, dict) and "domain" in unavailable:
-        unavailable = [unavailable["domain"]]
-    elif not isinstance(unavailable, list):
-        unavailable = []
+    if unmatched_entries:
+        # The requested domains these entries were meant for are reported below as missing;
+        # logging the raw entries makes the mismatch diagnosable.
+        logger.warning("NameSilo reply entries matching no requested domain: %s", ", ".join(unmatched_entries))
 
-    for domain in unavailable:
-        if isinstance(domain, str):
-            results.append(DomainAvailabilityResult(domain=domain, available=False))
-        elif isinstance(domain, dict):
-            results.append(DomainAvailabilityResult(domain=domain.get("domain", ""), available=False))
-
-    # Process invalid domains
-    invalid = reply.get("invalid", {})
-    if isinstance(invalid, dict) and "domain" in invalid:
-        invalid = [invalid["domain"]]
-    elif not isinstance(invalid, list):
-        invalid = []
-
-    for domain in invalid:
-        if isinstance(domain, str):
-            results.append(DomainAvailabilityResult(domain=domain, available=False, error="Invalid domain name"))
-        elif isinstance(domain, dict):
-            results.append(DomainAvailabilityResult(domain=domain.get("domain", ""), available=False, error="Invalid domain name"))
+    for key in conflicting_keys:
+        results[key] = DomainAvailabilityResult(
+            domain=key,
+            available=False,
+            error="NameSilo reported conflicting statuses for this domain",
+        )
+    for key in batch_keys:
+        if key not in results:
+            results[key] = DomainAvailabilityResult(
+                domain=key,
+                available=False,
+                error="Domain missing from NameSilo response",
+            )
 
     return results
+
+
+async def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainAvailabilityResult]:
+    """
+    Check domain availability via the NameSilo API.
+
+    Returns exactly one result per entry of `domains`, in the same order, each carrying the
+    domain as it was requested. Domains NameSilo does not report on get an explicit error.
+    """
+    requested_keys = [_namesilo_domain_key(domain) for domain in domains]
+    results_by_key: dict[str, DomainAvailabilityResult] = {}
+    sendable_keys: list[str] = []
+    for key in dict.fromkeys(requested_keys):
+        # A comma would split the entry into several domains in NameSilo's comma-delimited list.
+        if not key or "," in key:
+            results_by_key[key] = DomainAvailabilityResult(domain=key, available=False, error="Invalid domain name")
+        else:
+            sendable_keys.append(key)
+
+    if sendable_keys:
+        async with httpx.AsyncClient(timeout=NAMESILO_REQUEST_TIMEOUT_SECONDS) as client:
+            for start in range(0, len(sendable_keys), NAMESILO_MAX_DOMAINS_PER_REQUEST):
+                batch_keys = sendable_keys[start:start + NAMESILO_MAX_DOMAINS_PER_REQUEST]
+                results_by_key.update(await _check_namesilo_batch(client, batch_keys, api_key))
+
+    return [replace(results_by_key[key], domain=domain) for domain, key in zip(domains, requested_keys, strict=True)]
 
 
 # =============================================================================
@@ -314,16 +462,17 @@ async def check_domains(
         return json.dumps({"error": "No valid domain names after expansion"})
 
     # Select lookup method
-    api_key = get_namesilo_key()
+    # The Keychain lookup runs a subprocess that can block on a Keychain dialog.
+    api_key = await asyncio.to_thread(get_namesilo_key)
     if method == "namesilo":
         if not api_key:
             return json.dumps({"error": "NameSilo API key not configured"})
-        results = _check_domains_internal(domains, api_key)
+        results = await _check_domains_internal(domains, api_key)
     elif method == "rdap":
         results = await _check_domains_rdap_async(domains)
     else:  # auto
         if api_key:
-            results = _check_domains_internal(domains, api_key)
+            results = await _check_domains_internal(domains, api_key)
         else:
             results = await _check_domains_rdap_async(domains)
 
@@ -573,16 +722,17 @@ async def check_everything(
             all_domains.append(f"{name}.{tld}")
 
     # Select lookup method
-    api_key = get_namesilo_key()
+    # The Keychain lookup runs a subprocess that can block on a Keychain dialog.
+    api_key = await asyncio.to_thread(get_namesilo_key)
     if method == "namesilo":
         if not api_key:
             return json.dumps({"error": "NameSilo API key not configured"})
-        domain_results = _check_domains_internal(all_domains, api_key)
+        domain_results = await _check_domains_internal(all_domains, api_key)
     elif method == "rdap":
         domain_results = await _check_domains_rdap_async(all_domains)
     else:  # auto
         if api_key:
-            domain_results = _check_domains_internal(all_domains, api_key)
+            domain_results = await _check_domains_internal(all_domains, api_key)
         else:
             domain_results = await _check_domains_rdap_async(all_domains)
 
