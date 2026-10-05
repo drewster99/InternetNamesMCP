@@ -5,7 +5,7 @@ An MCP server for checking availability of domain names, social media handles, a
 ## Features
 
 - **Domain names** - Check availability via RDAP (free) or NameSilo API (free, but requires API key - responses include domain prices too)
-- **Social media handles** - Instagram, Twitter/X, Reddit, YouTube, TikTok, Twitch, Threads, Bluesky
+- **Social media handles** - Instagram, Twitter/X, Reddit, YouTube, TikTok, Twitch, Threads, Bluesky, GitHub, Snapchat, Pinterest, Kick, Substack
 - **Subreddits** - Check if subreddit names are available on Reddit
 - **Comprehensive search** - Generate name combinations and check everything at once
 
@@ -91,7 +91,7 @@ Returns list of supported social media platforms.
 **Response:**
 ```json
 {
-  "platforms": ["instagram", "twitter", "reddit", "youtube", "tiktok", "twitch", "threads", "bluesky", "subreddit"]
+  "platforms": ["instagram", "twitter", "reddit", "youtube", "tiktok", "twitch", "threads", "bluesky", "github", "snapchat", "pinterest", "kick", "substack", "subreddit"]
 }
 ```
 
@@ -141,7 +141,7 @@ Check social media handle availability across platforms.
 | `platforms` | list[str] | all platforms | Platforms to check |
 | `only_report_available` | bool | `false` | If true, omit unavailable handles from response |
 
-Supported platforms: `instagram`, `twitter`, `reddit`, `youtube`, `tiktok`, `twitch`, `threads`, `bluesky`
+Supported platforms: `instagram`, `twitter`, `reddit`, `youtube`, `tiktok`, `twitch`, `threads`, `bluesky`, `github`, `snapchat`, `pinterest`, `kick`, `substack`
 
 All platforms are checked in parallel; a typical call takes 2–5 seconds. Instagram, Threads and Reddit use a headless Chromium browser (installed automatically on first use).
 
@@ -157,6 +157,11 @@ How each platform is checked, and what "available" means:
 | `tiktok` | Profile page's embedded user status | No account found (banned or removed accounts look the same) |
 | `youtube` | `@handle` page status | No channel found (reserved or terminated handles may look the same) |
 | `twitch` | Twitch web GraphQL user lookup, including suspended and deleted accounts | No account found |
+| `github` | GitHub REST API user lookup (users and organizations; 60 lookups/hour without a token) | No account found (reserved names may look the same) |
+| `snapchat` | `snapchat.com/@username` page status | No account found (reserved names may look the same) |
+| `pinterest` | Profile page title, or the page's embedded "User not found" error | No account found (reserved names may look the same) |
+| `kick` | Kick public channel API, plus the hyphenated slug Kick gives some underscore usernames | No channel found (Kick does not publish length rules, so only characters are validated) |
+| `substack` | Whether `<name>.substack.com` serves or redirects (publication subdomains, not Substack user handles) | No publication or reserved subdomain found |
 
 A platform is reported as available only when it positively says so. Block pages, rate limits and unexpected responses are reported as errors (in `unavailable`, with an `error` field), never as available or taken.
 
@@ -377,7 +382,7 @@ Instagram limits how many signup username validations one IP address can make. W
 
 ### Reddit errors ("bot-check page" or "without data")
 
-Reddit blocks non-browser clients and rate-limits by IP address. The server passes Reddit's JavaScript check in a headless browser, but heavy use can still get the IP temporarily blocked. Wait a while and retry.
+Reddit blocks non-browser clients and rate-limits by IP address. The server passes Reddit's JavaScript check in a headless browser and keeps the resulting Reddit cookies in memory (never on disk) for the life of the server process, because clearing a fresh challenge on every call makes Reddit escalate to a CAPTCHA. If Reddit still asks for a CAPTCHA, the error says so; the server never attempts to solve it. Wait a while and retry.
 
 ## Copyright
 

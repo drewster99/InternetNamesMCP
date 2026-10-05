@@ -20,6 +20,13 @@ an account:
 - Twitch: Twitch's web GraphQL user lookup, which includes suspended and
   deleted accounts
 - YouTube: the HTTP status of the @handle page
+- GitHub: the REST API user lookup (covers users and organizations)
+- Snapchat: the HTTP status of the @username page
+- Pinterest: the profile page title, or its embedded "User not found" error
+- Kick: the public channel API (plus the hyphenated slug Kick gives
+  underscore usernames)
+- Substack: whether <name>.substack.com serves or redirects (publications,
+  not Substack user handles)
 
 A result is only AVAILABLE when the platform positively reported that the name
 can be registered (or, where no such signal exists, that no account has it).
@@ -65,6 +72,11 @@ class Platform(StrEnum):
     TWITCH = "twitch"
     THREADS = "threads"
     BLUESKY = "bluesky"
+    GITHUB = "github"
+    SNAPCHAT = "snapchat"
+    PINTEREST = "pinterest"
+    KICK = "kick"
+    SUBSTACK = "substack"
 
 
 class AvailabilityStatus(Enum):
@@ -112,6 +124,22 @@ CHECK_FAILURES = (
     RedditBlockedError,
     ValueError,
 )
+
+
+class _RedditSessionCookies:
+    """
+    Reddit cookies from the last browser session that cleared Reddit's challenge.
+
+    Kept for the life of the server process so each tool call reuses the cleared
+    session, as a normal browser would. Fresh challenges in quick succession make
+    Reddit escalate to a CAPTCHA. In memory only; never written to disk.
+    """
+
+    def __init__(self) -> None:
+        self.cookies: list[dict] = []
+
+
+_reddit_session_cookies = _RedditSessionCookies()
 
 
 def _available() -> HandleResult:
@@ -190,7 +218,20 @@ TIKTOK_STATUS_PRIVATE = 10222
 
 REDDIT_BASE_URL = "https://www.reddit.com"
 REDDIT_SEARCH_REDIRECT_PATH = "/subreddits/search"
+REDDIT_COOKIE_DOMAIN = "reddit.com"
+REDDIT_CAPTCHA_MARKER = "Prove your humanity"
 REDDIT_BAD_USERNAME_ERROR = "BAD_USERNAME"
+
+GITHUB_USERS_API_URL = "https://api.github.com/users"
+GITHUB_ORGANIZATION_TYPE = "Organization"
+
+PINTEREST_NOT_FOUND_MARKERS = ['"httpStatus":404', "User not found."]
+
+KICK_CHANNELS_API_URL = "https://kick.com/api/v2/channels"
+
+SUBSTACK_HOST_SUFFIX = "substack.com"
+# Any name must at least be a valid DNS label before it is placed in a hostname.
+DNS_LABEL_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 # =============================================================================
@@ -223,6 +264,27 @@ TIKTOK_RULE = UsernameRule(
 YOUTUBE_RULE = UsernameRule(
     re.compile(r"[\w.-]{3,30}"),
     "3-30 letters, numbers, underscores, hyphens or periods",
+)
+GITHUB_RULE = UsernameRule(
+    re.compile(r"(?=.{1,39}\Z)[A-Za-z0-9](?:-?[A-Za-z0-9])*"),
+    "up to 39 letters, numbers or single hyphens, not starting or ending with a hyphen",
+)
+SNAPCHAT_RULE = UsernameRule(
+    re.compile(r"[A-Za-z][A-Za-z0-9._-]{1,13}[A-Za-z0-9]"),
+    "3-15 letters, numbers, hyphens, underscores or periods, starting with a letter and ending with a letter or number",
+)
+PINTEREST_RULE = UsernameRule(
+    re.compile(r"(?=.*[A-Za-z_])[A-Za-z0-9_]{3,30}"),
+    "3-30 letters, numbers or underscores, not only numbers",
+)
+# Kick does not publish length limits, so only the character set is enforced.
+KICK_RULE = UsernameRule(
+    re.compile(r"[A-Za-z0-9_-]+"),
+    "letters, numbers, underscores or hyphens",
+)
+SUBSTACK_RULE = UsernameRule(
+    re.compile(r"[A-Za-z0-9]{4,32}"),
+    "4-32 letters or numbers",
 )
 SUBREDDIT_RULE = UsernameRule(
     re.compile(r"[A-Za-z0-9][A-Za-z0-9_]{2,20}"),
@@ -413,6 +475,11 @@ class SocialChecker:
             Platform.TWITCH: self._check_twitch,
             Platform.THREADS: self._check_threads,
             Platform.BLUESKY: self._check_bluesky,
+            Platform.GITHUB: self._check_github,
+            Platform.SNAPCHAT: self._check_snapchat,
+            Platform.PINTEREST: self._check_pinterest,
+            Platform.KICK: self._check_kick,
+            Platform.SUBSTACK: self._check_substack,
         }
         return checkers[platform]
 
@@ -462,27 +529,45 @@ class SocialChecker:
 
         Reddit answers fresh clients with a page whose script computes a token and
         resubmits the request; once the browser has run it, the context's cookies
-        let JSON endpoints through.
+        let JSON endpoints through. Cookies from an earlier cleared session in this
+        process are tried first.
         """
         async with self._reddit_lock:
             if self._reddit_request is not None:
                 return self._reddit_request
             context = await self._get_browser_context()
+            if _reddit_session_cookies.cookies:
+                await context.add_cookies(_reddit_session_cookies.cookies)
+                if await self._reddit_accepts(context):
+                    self._reddit_request = context.request
+                    return self._reddit_request
             page = await context.new_page()
             try:
                 for _ in range(REDDIT_CHALLENGE_ATTEMPTS):
                     await page.goto(f"{REDDIT_BASE_URL}/", wait_until="load", timeout=PAGE_LOAD_TIMEOUT_MS)
-                    probe = await context.request.get(
-                        f"{REDDIT_BASE_URL}/api/username_available.json",
-                        params={"user": "reddit"},
-                        max_redirects=0,
-                    )
-                    if _is_json(probe):
+                    if await self._reddit_accepts(context):
+                        _reddit_session_cookies.cookies = [
+                            cookie for cookie in await context.cookies()
+                            if cookie["domain"].endswith(REDDIT_COOKIE_DOMAIN)
+                        ]
                         self._reddit_request = context.request
                         return self._reddit_request
+                    if REDDIT_CAPTCHA_MARKER in await page.inner_text("body"):
+                        raise RedditBlockedError(
+                            "Reddit is asking this network to solve a CAPTCHA (too many recent checks); "
+                            "try again later"
+                        )
             finally:
                 await page.close()
             raise RedditBlockedError("Reddit kept serving its bot-check page; try again later")
+
+    async def _reddit_accepts(self, context: BrowserContext) -> bool:
+        probe = await context.request.get(
+            f"{REDDIT_BASE_URL}/api/username_available.json",
+            params={"user": "reddit"},
+            max_redirects=0,
+        )
+        return _is_json(probe)
 
     async def _reddit_get(self, url: str, params: dict[str, str] | None = None) -> APIResponse:
         """
@@ -496,6 +581,7 @@ class SocialChecker:
             return response
         async with self._reddit_lock:
             self._reddit_request = None
+            _reddit_session_cookies.cookies = []
         return await (await self._get_reddit_request()).get(url, params=params, max_redirects=0)
 
     async def _get_instagram_signup_page(self) -> Page:
@@ -657,6 +743,96 @@ class SocialChecker:
             return _unavailable(note="Reserved or not allowed by Bluesky")
         return _unavailable()
 
+    async def _check_github(self, username: str) -> HandleResult:
+        response = await self._http.get(
+            f"{GITHUB_USERS_API_URL}/{_path_segment(username)}",
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        if response.status_code == 404:
+            return _available_if_valid(username, GITHUB_RULE, "GitHub")
+        if response.status_code in (403, 429) and response.headers.get("x-ratelimit-remaining") == "0":
+            return _failed("GitHub API rate limit (60 lookups per hour without a token) reached; try again later")
+        if response.status_code != 200:
+            return _failed(f"GitHub returned HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("html_url"), str):
+            return _failed(f"Unexpected GitHub response: {response.text[:100]}")
+        note = "organization" if payload.get("type") == GITHUB_ORGANIZATION_TYPE else None
+        return _unavailable(url=payload["html_url"], note=note)
+
+    async def _check_snapchat(self, username: str) -> HandleResult:
+        # Snapchat redirects mixed-case names to the lowercase URL.
+        handle = username.lower()
+        url = f"https://www.snapchat.com/@{_path_segment(handle)}"
+        response = await self._http.get(url, headers={"User-Agent": WEB_USER_AGENT})
+        if response.status_code == 404:
+            return _available_if_valid(username, SNAPCHAT_RULE, "Snapchat")
+        if response.status_code != 200:
+            return _failed(f"Snapchat returned HTTP {response.status_code}")
+        if f"(@{handle})" not in _page_title(response.text).lower():
+            return _failed("Snapchat page did not show the profile")
+        return _unavailable(url=url)
+
+    async def _check_pinterest(self, username: str) -> HandleResult:
+        url = f"https://www.pinterest.com/{_path_segment(username.lower())}/"
+        response = await self._http.get(url, headers={"User-Agent": WEB_USER_AGENT})
+        if response.status_code != 200:
+            return _failed(f"Pinterest returned HTTP {response.status_code}")
+        # Profile titles look like "Name (username) - Profile | Pinterest".
+        if f"({username.lower()})" in _page_title(response.text).lower():
+            return _unavailable(url=url)
+        if all(marker in response.text for marker in PINTEREST_NOT_FOUND_MARKERS):
+            return _available_if_valid(username, PINTEREST_RULE, "Pinterest")
+        return _failed("Pinterest page showed neither a profile nor a not-found error")
+
+    async def _check_kick(self, username: str) -> HandleResult:
+        channel = await self._find_kick_channel(username.lower())
+        if channel is None and "_" in username:
+            # Kick has given some underscore usernames a hyphenated slug (user Adin_ross is
+            # at /adin-ross), but a different channel may own that slug, so the owner must match.
+            hyphenated = await self._find_kick_channel(username.lower().replace("_", "-"))
+            owner = hyphenated.get("user") if hyphenated is not None else None
+            owner_name = owner.get("username") if isinstance(owner, dict) else None
+            if isinstance(owner_name, str) and owner_name.lower() == username.lower():
+                channel = hyphenated
+        if channel is None:
+            return _available_if_valid(username, KICK_RULE, "Kick")
+        slug = channel.get("slug")
+        if not isinstance(slug, str):
+            return _failed(f"Unexpected Kick response: {json.dumps(channel)[:100]}")
+        note = "banned" if channel.get("is_banned") is True else None
+        return _unavailable(url=f"https://kick.com/{_path_segment(slug)}", note=note)
+
+    async def _find_kick_channel(self, slug: str) -> dict | None:
+        """Return Kick's channel record for a slug, or None if there is no such channel."""
+        response = await self._http.get(
+            f"{KICK_CHANNELS_API_URL}/{_path_segment(slug)}",
+            headers={"User-Agent": WEB_USER_AGENT},
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise ValueError(f"Kick returned HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError(f"Unexpected Kick response: {response.text[:100]}")
+        return payload
+
+    async def _check_substack(self, username: str) -> HandleResult:
+        subdomain = username.lower()
+        if DNS_LABEL_PATTERN.fullmatch(subdomain) is None:
+            return _unavailable(note=f"Not a valid Substack subdomain ({SUBSTACK_RULE.description})")
+        url = f"https://{subdomain}.{SUBSTACK_HOST_SUFFIX}/"
+        response = await self._http.get(url, headers={"User-Agent": WEB_USER_AGENT})
+        if response.status_code == 404:
+            return _available_if_valid(username, SUBSTACK_RULE, "Substack")
+        if response.status_code == 200:
+            return _unavailable(url=url)
+        if 300 <= response.status_code < 400:
+            # Subdomains held by a writer's profile or reserved by Substack redirect elsewhere.
+            return _unavailable(note=f"{url} redirects to {response.headers.get('location', 'another page')}")
+        return _failed(f"Substack returned HTTP {response.status_code}")
+
     async def _check_reddit_user(self, username: str) -> HandleResult:
         response = await self._reddit_get(f"{REDDIT_BASE_URL}/api/username_available.json", {"user": username})
         if not _is_json(response):
@@ -784,6 +960,11 @@ def _interpret_instagram_validation(username: str, payload: object) -> Instagram
     if message.lower() == f"the username {username.lower()} is not available.":
         return InstagramValidation(InstagramVerdict.NOT_AVAILABLE, message)
     return InstagramValidation(InstagramVerdict.REJECTED, message)
+
+
+def _page_title(html: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, re.DOTALL)
+    return match.group(1) if match else ""
 
 
 def _is_json(response: APIResponse) -> bool:

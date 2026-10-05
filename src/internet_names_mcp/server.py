@@ -410,7 +410,8 @@ async def check_handles(
     Args:
         username: The username/handle to check
         platforms: List of platforms to check (default: all supported platforms)
-                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky
+                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky,
+                   github, snapchat, pinterest, kick, substack
         only_report_available: If true, only return available handles in response
 
     Returns:
@@ -515,7 +516,8 @@ async def check_everything(
               a leading dot. Example: ["com", "io", "ai"] — NOT "com\nio\nai" or "com,io,ai".
               Default: ["com", "net", "org", "io", "ai"]
         platforms: Social platforms to check (default: all).
-                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky
+                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky,
+                   github, snapchat, pinterest, kick, substack
         method: Domain lookup method - "auto" (default, uses namesilo if API key available,
                 otherwise rdap), "rdap" (direct registry queries), "namesilo" (requires API key)
         require_all_tlds_available: If true, a name must be available in ALL specified TLDs
