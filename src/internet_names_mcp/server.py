@@ -7,7 +7,6 @@ An MCP server for checking availability of:
 - Subreddit names (via Reddit's JSON endpoints in a headless browser session)
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -24,7 +23,6 @@ from .config import get_namesilo_key
 if not os.environ.get("INTERNET_NAMES_DEBUG"):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-from .rdap_bootstrap import get_rdap_server
 from .rdap_client import (
     DomainStatus,
     check_domains_async,
@@ -60,8 +58,8 @@ ALL_SOCIALS = SUPPORTED_PLATFORMS + ["subreddit"]
 # =============================================================================
 
 @dataclass
-class DomainResult:
-    """Result of a domain availability check."""
+class DomainAvailabilityResult:
+    """Result of a domain availability check, normalized across lookup methods (NameSilo or RDAP)."""
     domain: str
     available: bool
     price: float | None = None
@@ -71,30 +69,31 @@ class DomainResult:
 async def _check_domains_rdap_async(
     domains: list[str],
     max_retries: int = 3,
-) -> list[DomainResult]:
+) -> list[DomainAvailabilityResult]:
     """
     Check domain availability via RDAP protocol using async parallel execution.
 
-    Returns DomainResult objects with proper status categorization.
+    Returns DomainAvailabilityResult objects with proper status categorization.
     Errors (timeout, rate_limit) are NOT marked as unavailable.
     """
     rdap_results = await check_domains_async(domains, max_retries=max_retries)
 
-    # Convert rdap_client.DomainResult to local DomainResult for backward compatibility
+    # NameSilo and RDAP lookups feed the same response builders, so RDAP results are
+    # normalized into the shared DomainAvailabilityResult shape.
     results = []
     for r in rdap_results:
         if r.status == DomainStatus.AVAILABLE:
-            results.append(DomainResult(domain=r.domain, available=True))
+            results.append(DomainAvailabilityResult(domain=r.domain, available=True))
         elif r.status == DomainStatus.UNAVAILABLE:
-            results.append(DomainResult(domain=r.domain, available=False))
+            results.append(DomainAvailabilityResult(domain=r.domain, available=False))
         elif r.status == DomainStatus.UNSUPPORTED:
-            results.append(DomainResult(
+            results.append(DomainAvailabilityResult(
                 domain=r.domain,
                 available=False,
                 error=r.error_message,
             ))
         else:  # ERROR status - keep error info for response
-            results.append(DomainResult(
+            results.append(DomainAvailabilityResult(
                 domain=r.domain,
                 available=False,
                 error=r.error_message,
@@ -103,21 +102,7 @@ async def _check_domains_rdap_async(
     return results
 
 
-def _check_domains_rdap(
-    domains: list[str],
-    delay: float = 1.0,  # Deprecated, ignored
-    max_retries: int = 3,
-) -> list[DomainResult]:
-    """
-    Synchronous wrapper for RDAP domain checking.
-
-    Note: The 'delay' parameter is deprecated and ignored.
-    Rate limiting is now handled per-host automatically.
-    """
-    return asyncio.run(_check_domains_rdap_async(domains, max_retries=max_retries))
-
-
-def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResult]:
+def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainAvailabilityResult]:
     """Internal function to check domain availability via NameSilo API."""
     params = {
         "version": "1",
@@ -131,15 +116,15 @@ def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResu
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPError as e:
-        return [DomainResult(domain=d, available=False, error=str(e)) for d in domains]
+        return [DomainAvailabilityResult(domain=d, available=False, error=str(e)) for d in domains]
     except ValueError as e:
-        return [DomainResult(domain=d, available=False, error=f"Invalid JSON: {e}") for d in domains]
+        return [DomainAvailabilityResult(domain=d, available=False, error=f"Invalid JSON: {e}") for d in domains]
 
     reply = data.get("reply", {})
     code = reply.get("code")
     if code and int(code) != 300:
         detail = reply.get("detail", "Unknown error")
-        return [DomainResult(domain=d, available=False, error=f"API Error {code}: {detail}") for d in domains]
+        return [DomainAvailabilityResult(domain=d, available=False, error=f"API Error {code}: {detail}") for d in domains]
 
     results = []
 
@@ -164,7 +149,7 @@ def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResu
         if isinstance(item, dict):
             domain = item.get("domain", "")
             price = item.get("price")
-            results.append(DomainResult(
+            results.append(DomainAvailabilityResult(
                 domain=domain,
                 available=True,
                 price=float(price) if price else None
@@ -179,9 +164,9 @@ def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResu
 
     for domain in unavailable:
         if isinstance(domain, str):
-            results.append(DomainResult(domain=domain, available=False))
+            results.append(DomainAvailabilityResult(domain=domain, available=False))
         elif isinstance(domain, dict):
-            results.append(DomainResult(domain=domain.get("domain", ""), available=False))
+            results.append(DomainAvailabilityResult(domain=domain.get("domain", ""), available=False))
 
     # Process invalid domains
     invalid = reply.get("invalid", {})
@@ -192,9 +177,9 @@ def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResu
 
     for domain in invalid:
         if isinstance(domain, str):
-            results.append(DomainResult(domain=domain, available=False, error="Invalid domain name"))
+            results.append(DomainAvailabilityResult(domain=domain, available=False, error="Invalid domain name"))
         elif isinstance(domain, dict):
-            results.append(DomainResult(domain=domain.get("domain", ""), available=False, error="Invalid domain name"))
+            results.append(DomainAvailabilityResult(domain=domain.get("domain", ""), available=False, error="Invalid domain name"))
 
     return results
 
@@ -332,19 +317,16 @@ async def check_domains(
 
     # Select lookup method
     api_key = get_namesilo_key()
-    use_rdap = False
     if method == "namesilo":
         if not api_key:
             return json.dumps({"error": "NameSilo API key not configured"})
         results = _check_domains_internal(domains, api_key)
     elif method == "rdap":
-        use_rdap = True
         results = await _check_domains_rdap_async(domains)
     else:  # auto
         if api_key:
             results = _check_domains_internal(domains, api_key)
         else:
-            use_rdap = True
             results = await _check_domains_rdap_async(domains)
 
     # Build response with proper error categorization
@@ -600,7 +582,7 @@ async def check_everything(
             domain_results = await _check_domains_rdap_async(all_domains)
 
     # Group results by basename and collect errors
-    basename_results: dict[str, list[DomainResult]] = {}
+    basename_results: dict[str, list[DomainAvailabilityResult]] = {}
     domain_errors = []
     for r in domain_results:
         if r.error:

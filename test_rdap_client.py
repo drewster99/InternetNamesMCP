@@ -19,7 +19,7 @@ if sys.version_info < (3, 10):
 
 try:
     import anyio
-    import httpx
+    import httpx  # noqa: F401
 except ImportError as e:
     print(f"Error: {e}")
     print()
@@ -27,7 +27,6 @@ except ImportError as e:
     print("    source ./devsetup.sh")
     sys.exit(1)
 
-import asyncio
 import random
 import string
 import time

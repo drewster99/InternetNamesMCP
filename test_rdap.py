@@ -7,10 +7,11 @@ Usage:
     python test_rdap.py
 """
 
+import asyncio
 import sys
 
 try:
-    from internet_names_mcp.server import _check_domains_rdap
+    from internet_names_mcp.server import _check_domains_rdap_async
     from internet_names_mcp.rdap_bootstrap import get_supported_tlds, refresh_bootstrap
 except ImportError as e:
     print(f"Error: {e}")
@@ -67,7 +68,7 @@ if __name__ == "__main__":
     taken_count = 0
     error_count = 0
 
-    results = _check_domains_rdap(domains)
+    results = asyncio.run(_check_domains_rdap_async(domains))
 
     for r in results:
         if r.error:
@@ -81,7 +82,7 @@ if __name__ == "__main__":
             taken_count += 1
         print(f"{r.domain}: {status}")
 
-    print(f"\n--- Summary ---")
+    print("\n--- Summary ---")
     print(f"Available: {available_count}")
     print(f"Taken:     {taken_count}")
     print(f"Errors:    {error_count}")

@@ -18,8 +18,8 @@ if sys.version_info < (3, 10):
     sys.exit(1)
 
 try:
-    import httpx
-    import mcp
+    import httpx  # noqa: F401
+    import mcp  # noqa: F401
 except ImportError as e:
     print(f"Error: {e}")
     print()
@@ -68,7 +68,6 @@ from internet_names_mcp.server import (
     check_everything,
     SUPPORTED_PLATFORMS,
     ALL_SOCIALS,
-    DEFAULT_TLDS,
     VERSION,
 )
 
@@ -173,7 +172,7 @@ def run_offline_tests(runner: TestRunner):
     runner.section("RDAP Bootstrap")
 
     # Test bootstrap refresh
-    refreshed = refresh_bootstrap()
+    refresh_bootstrap()
     runner.test("bootstrap refresh runs without error", True)
 
     # Test cache file exists after refresh

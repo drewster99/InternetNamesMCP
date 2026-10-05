@@ -238,7 +238,6 @@ class AsyncRDAPClient:
 
         for attempt in range(self._max_retries):
             await limiter.acquire()
-            rate_limited = False
             retry_after: float | None = None
 
             try:
@@ -256,7 +255,6 @@ class AsyncRDAPClient:
                     retry_after = _parse_retry_after(
                         response.headers.get("Retry-After")
                     )
-                    rate_limited = True
                     last_error_type = "rate_limit"
                     last_retry_after = retry_after
                     last_error = None

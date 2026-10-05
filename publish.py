@@ -140,7 +140,7 @@ def main():
     new_version = increment_version(current_version, bump)
 
     print(f"\n{'=' * 50}")
-    print(f"  Publishing internet-names-mcp")
+    print("  Publishing internet-names-mcp")
     print(f"{'=' * 50}\n")
     print(f"  Current version: {current_version}")
     print(f"  New version:     {new_version}")
@@ -200,7 +200,7 @@ def main():
     print("\nUploading to PyPI...")
     result = run([sys.executable, "-m", "twine", "upload", "dist/*"], check=False)
     if result.returncode != 0:
-        print(f"  ✗ Upload failed:")
+        print("  ✗ Upload failed:")
         print(result.stderr)
         print("\nVersion files have been updated. You may need to:")
         print("  1. Configure PyPI credentials: python -m twine upload dist/* --username __token__")
@@ -212,7 +212,7 @@ def main():
     print("\nCommitting version bump...")
     run(["git", "add", str(PYPROJECT_PATH), str(INIT_PATH), str(SERVER_PATH)])
     run(["git", "commit", "-m", f"Bump version to {new_version}"])
-    print(f"  ✓ Committed")
+    print("  ✓ Committed")
 
     # Git push
     print("\nPushing to remote...")
