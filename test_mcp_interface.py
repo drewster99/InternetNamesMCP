@@ -178,7 +178,8 @@ async def run_mcp_tests(runner: TestRunner, session: ClientSession):
     runner.test("check_handles tool exists", "check_handles" in tool_names)
     runner.test("check_subreddits tool exists", "check_subreddits" in tool_names)
     runner.test("check_everything tool exists", "check_everything" in tool_names)
-    runner.test("exactly 5 tools exposed", len(tools) == 5, f"Found {len(tools)} tools")
+    runner.test("version tool exists", "version" in tool_names)
+    runner.test("exactly 6 tools exposed", len(tools) == 6, f"Found {len(tools)} tools")
 
     # Check tool schemas
     for tool in tools:
@@ -236,13 +237,11 @@ async def run_mcp_tests(runner: TestRunner, session: ClientSession):
         "has error": lambda d: "error" in d,
     })
 
-    # Invalid method
+    # Invalid method: the MCP SDK rejects it against the tool's Literal schema before the tool runs
     result = await session.call_tool("check_domains", {"names": ["test"], "method": "invalid"})
     text = extract_text(result)
-    runner.test_json("invalid method returns error", text, {
-        "has error": lambda d: "error" in d,
-        "error mentions method": lambda d: "method" in d.get("error", "").lower(),
-    })
+    runner.test("invalid method returns error", result.is_error, text[:100])
+    runner.test("invalid method error mentions method", "method" in text.lower(), text[:100])
 
     # Whitespace-only names
     result = await session.call_tool("check_domains", {"names": ["", "   "]})

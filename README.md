@@ -373,7 +373,7 @@ uvx --from playwright install chromium
 
 ### "Instagram is throttling username checks"
 
-Instagram limits how many signup username validations one IP address can make. While throttled it answers "not available" for every name; the server detects this with a random control name and reports an error (noting whether a profile exists) instead of a wrong answer. In testing the throttle tripped after roughly 30–40 checks from one IP address. Wait a while and retry.
+Instagram limits how many signup username validations one IP address can make. While throttled it answers "not available" for every name; the server detects this with a random control name and reports an error (noting whether a profile exists) instead of a wrong answer. In testing the throttle tripped after roughly 20–40 checks from one IP address and cleared within about 25 minutes. Taken names are settled from the profile page and do not count toward it.
 
 ### Reddit errors ("bot-check page" or "without data")
 
