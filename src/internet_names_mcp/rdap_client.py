@@ -15,7 +15,11 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .rdap_bootstrap import get_rdap_server
+from .rdap_bootstrap import (
+    RDAPBootstrapUnavailableError,
+    get_rdap_server_async,
+    refresh_bootstrap_if_due_async,
+)
 
 
 class DomainStatus(Enum):
@@ -23,7 +27,7 @@ class DomainStatus(Enum):
 
     AVAILABLE = "available"  # 404 - can register
     UNAVAILABLE = "unavailable"  # 200 - already taken
-    ERROR = "error"  # timeout, rate_limit, network - RETRY LATER
+    ERROR = "error"  # timeout, rate_limit, network, bootstrap unavailable - RETRY LATER
     UNSUPPORTED = "unsupported"  # TLD not in bootstrap
 
 
@@ -34,7 +38,7 @@ class DomainResult:
     domain: str
     status: DomainStatus
     price: float | None = None
-    error_type: str | None = None  # "timeout", "rate_limit", "network", "tld_unsupported"
+    error_type: str | None = None  # "timeout", "rate_limit", "network", "http_error", "bootstrap_unavailable", "tld_unsupported"
     error_message: str | None = None
     retry_after: float | None = None
 
@@ -68,24 +72,34 @@ class HostRateLimiter:
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
-        """Acquire permission to make a request to this host."""
+        """
+        Acquire permission to make a request to this host.
+
+        Each successful acquire() must be paired with exactly one release().
+        """
         await self._semaphore.acquire()
 
-        async with self._lock:
-            now = time.monotonic()
-
-            # Honor retry_after from previous 429 response
-            if now < self._retry_after_until:
-                wait_time = self._retry_after_until - now
-                await asyncio.sleep(wait_time)
+        try:
+            async with self._lock:
                 now = time.monotonic()
 
-            # Enforce minimum delay between requests
-            elapsed = now - self._last_request_time
-            if elapsed < self.min_delay:
-                await asyncio.sleep(self.min_delay - elapsed)
+                # Honor retry_after from previous 429 response
+                if now < self._retry_after_until:
+                    wait_time = self._retry_after_until - now
+                    await asyncio.sleep(wait_time)
+                    now = time.monotonic()
 
-            self._last_request_time = time.monotonic()
+                # Enforce minimum delay between requests
+                elapsed = now - self._last_request_time
+                if elapsed < self.min_delay:
+                    await asyncio.sleep(self.min_delay - elapsed)
+
+                self._last_request_time = time.monotonic()
+        except BaseException:
+            # Cancelled while waiting out the delay: the caller never got the
+            # permit, so it would never release it.
+            self._semaphore.release()
+            raise
 
     def release(
         self, rate_limited: bool = False, retry_after: float | None = None
@@ -214,7 +228,15 @@ class AsyncRDAPClient:
         tld = domain.rsplit(".", 1)[-1].lower() if "." in domain else ""
 
         # Get RDAP server from bootstrap
-        rdap_server = get_rdap_server(tld)
+        try:
+            rdap_server = await get_rdap_server_async(tld)
+        except RDAPBootstrapUnavailableError as e:
+            return DomainResult(
+                domain=domain,
+                status=DomainStatus.ERROR,
+                error_type="bootstrap_unavailable",
+                error_message=str(e),
+            )
         if not rdap_server:
             return DomainResult(
                 domain=domain,
@@ -237,64 +259,61 @@ class AsyncRDAPClient:
         last_retry_after: float | None = None
 
         for attempt in range(self._max_retries):
-            await limiter.acquire()
+            # None when the request raised a timeout or network error.
+            response: httpx.Response | None = None
+            rate_limited = False
             retry_after: float | None = None
 
+            await limiter.acquire()
             try:
                 response = await self._client.get(url)
-
-                if response.status_code == 404:
-                    limiter.release(rate_limited=False)
-                    return DomainResult(domain=domain, status=DomainStatus.AVAILABLE)
-
-                if response.status_code == 200:
-                    limiter.release(rate_limited=False)
-                    return DomainResult(domain=domain, status=DomainStatus.UNAVAILABLE)
-
                 if response.status_code == 429:
+                    rate_limited = True
                     retry_after = _parse_retry_after(
                         response.headers.get("Retry-After")
                     )
-                    last_error_type = "rate_limit"
-                    last_retry_after = retry_after
-                    last_error = None
-                    limiter.release(rate_limited=True, retry_after=retry_after)
-
-                    # Continue to next retry attempt
-                    if attempt < self._max_retries - 1:
-                        # Wait before retry (limiter will also wait)
-                        wait_time = retry_after if retry_after else 0.5 * (attempt + 1)
-                        await asyncio.sleep(wait_time)
-                    continue
-
-                # Other status codes are errors
-                limiter.release(rate_limited=False)
-                return DomainResult(
-                    domain=domain,
-                    status=DomainStatus.ERROR,
-                    error_type="http_error",
-                    error_message=f"RDAP status {response.status_code}",
-                )
-
             except httpx.TimeoutException:
                 last_error_type = "timeout"
                 last_error = None
-                limiter.release(rate_limited=False)
-
-                if attempt < self._max_retries - 1:
-                    # Linear backoff for timeouts
-                    await asyncio.sleep(0.5 * (attempt + 1))
-                continue
-
             except httpx.HTTPError as e:
                 last_error_type = "network"
                 last_error = e
-                limiter.release(rate_limited=False)
+            finally:
+                # Released before any retry backoff below, so a sleeping retry
+                # doesn't hold one of this host's concurrency slots.
+                limiter.release(rate_limited=rate_limited, retry_after=retry_after)
 
+            if response is None:
                 if attempt < self._max_retries - 1:
-                    # Linear backoff for network errors
+                    # Linear backoff for timeouts and network errors
                     await asyncio.sleep(0.5 * (attempt + 1))
                 continue
+
+            if response.status_code == 404:
+                return DomainResult(domain=domain, status=DomainStatus.AVAILABLE)
+
+            if response.status_code == 200:
+                return DomainResult(domain=domain, status=DomainStatus.UNAVAILABLE)
+
+            if response.status_code == 429:
+                last_error_type = "rate_limit"
+                last_retry_after = retry_after
+                last_error = None
+
+                # Continue to next retry attempt
+                if attempt < self._max_retries - 1:
+                    # Wait before retry (limiter will also wait)
+                    wait_time = retry_after if retry_after else 0.5 * (attempt + 1)
+                    await asyncio.sleep(wait_time)
+                continue
+
+            # Other status codes are errors
+            return DomainResult(
+                domain=domain,
+                status=DomainStatus.ERROR,
+                error_type="http_error",
+                error_message=f"RDAP status {response.status_code}",
+            )
 
         # All retries exhausted
         error_message = str(last_error)[:100] if last_error else None
@@ -320,6 +339,10 @@ class AsyncRDAPClient:
         """
         if not domains:
             return []
+
+        # Refresh once up front so the concurrent lookups below find the
+        # bootstrap current instead of each queuing a worker thread on the same refresh.
+        await refresh_bootstrap_if_due_async()
 
         # Launch all checks concurrently - rate limiting is handled per-host
         tasks = [self._check_single(domain) for domain in domains]
