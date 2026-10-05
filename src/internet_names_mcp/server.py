@@ -34,7 +34,7 @@ from .rdap_client import (
 )
 
 # Server version
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 
 # Initialize the MCP server
 mcp = MCPServer("internet-names", version=VERSION)
