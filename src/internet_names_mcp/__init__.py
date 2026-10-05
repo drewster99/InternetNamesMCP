@@ -104,15 +104,20 @@ def run_setup():
     key = getpass.getpass("API Key: ").strip()
 
     if key:
-        if set_namesilo_key(key):
-            import sys
-            if sys.platform == "darwin":
-                print("\n✓ API key saved to macOS Keychain")
-            else:
-                print(f"\n✓ API key saved to {get_config_file()}")
-            test_api_key(key)
+        try:
+            saved = set_namesilo_key(key)
+        except ValueError as e:
+            print(f"\n✗ API key not saved: {e}. Check that you pasted the whole key and nothing else.")
         else:
-            print("\n✗ Failed to save API key")
+            if saved:
+                import sys
+                if sys.platform == "darwin":
+                    print("\n✓ API key saved to macOS Keychain")
+                else:
+                    print(f"\n✓ API key saved to {get_config_file()}")
+                test_api_key(key)
+            else:
+                print("\n✗ Failed to save API key")
     else:
         print("\n✓ Skipped. RDAP will be used for domain lookups (no pricing info).")
 

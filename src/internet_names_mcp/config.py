@@ -10,14 +10,30 @@ API key lookup order:
 3. Config file (fallback)
 """
 
+import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 # Keychain service name
 KEYCHAIN_SERVICE = "internet-names-mcp.namesilo"
 KEYCHAIN_ACCOUNT = "namesilo"
+
+# `security` can block indefinitely on a Keychain unlock or access-confirmation
+# dialog. The server calls it while handling tool requests, so an unbounded wait
+# would stall them; this still leaves a person time to answer the dialog.
+KEYCHAIN_TIMEOUT_SECONDS = 30
+
+# `security` reads a prompted password with getpass(3), which silently
+# discards everything past _PASSWORD_LEN characters.
+KEYCHAIN_PROMPTED_PASSWORD_MAX_LENGTH = 128
+
+# `security` exits with this status when the requested item doesn't exist
+# (errSecItemNotFound).
+SECURITY_EXIT_ITEM_NOT_FOUND = 44
 
 
 def _is_macos() -> bool:
@@ -31,31 +47,71 @@ def _keychain_get(service: str, account: str) -> str | None:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
             capture_output=True,
-            text=True
+            text=True,
+            timeout=KEYCHAIN_TIMEOUT_SECONDS
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
+    except subprocess.TimeoutExpired:
+        logger.warning("Timed out after %ss reading Keychain item %s", KEYCHAIN_TIMEOUT_SECONDS, service)
+        return None
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        logger.warning("Could not read Keychain item %s: %s", service, e)
+        return None
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    # Callers treat None as "no key here" and move on to other sources, so a
+    # Keychain failure would otherwise look exactly like an unconfigured key.
+    if result.returncode not in (0, SECURITY_EXIT_ITEM_NOT_FOUND):
+        logger.warning(
+            "Could not read Keychain item %s (security exit %s): %s",
+            service, result.returncode, result.stderr.strip()
+        )
     return None
 
 
+def _validate_storable_via_security_prompt(password: str) -> None:
+    """Raise ValueError unless `password` survives the `security` prompt and a read back unchanged."""
+    # A password `security` can't read back intact must be refused up front:
+    # a mangled prompt exchange (e.g. an embedded newline) makes `security`
+    # overwrite the item with an empty password and still exit 0.
+    if not password:
+        raise ValueError("the key is empty")
+    if len(password) > KEYCHAIN_PROMPTED_PASSWORD_MAX_LENGTH:
+        raise ValueError(f"the key is longer than {KEYCHAIN_PROMPTED_PASSWORD_MAX_LENGTH} characters")
+    # `find-generic-password -w` returns non-ASCII or non-printable data as hex.
+    if not (password.isascii() and password.isprintable()):
+        raise ValueError("the key contains non-ASCII or control characters")
+    # `_keychain_get` strips surrounding whitespace.
+    if password != password.strip():
+        raise ValueError("the key has leading or trailing whitespace")
+
+
 def _keychain_set(service: str, account: str, password: str) -> bool:
-    """Store a password in macOS Keychain."""
+    """
+    Store a password in macOS Keychain.
+
+    Raises ValueError if `password` can't be stored and read back intact.
+    """
+    _validate_storable_via_security_prompt(password)
     try:
-        # Delete existing entry first (ignore errors)
-        subprocess.run(
-            ["security", "delete-generic-password", "-s", service, "-a", account],
-            capture_output=True
-        )
-        # Add new entry
+        # A trailing bare `-w` makes `security` prompt for the password instead
+        # of taking it from argv, where any local process could read it. With
+        # no controlling terminal, getpass(3) reads stdin; a new session drops
+        # the terminal so `--setup` run from a shell doesn't block on /dev/tty.
+        # `-U` updates the item in place, so a write `security` rejects leaves
+        # the previous key intact.
         result = subprocess.run(
-            ["security", "add-generic-password", "-s", service, "-a", account, "-w", password, "-U"],
-            capture_output=True
+            ["security", "add-generic-password", "-s", service, "-a", account, "-U", "-w"],
+            input=f"{password}\n{password}\n",
+            capture_output=True,
+            text=True,
+            timeout=KEYCHAIN_TIMEOUT_SECONDS,
+            start_new_session=True
         )
-        return result.returncode == 0
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
+    # `security` exits 0 even when the prompt exchange goes wrong, so the exit
+    # status alone can't prove the intended key was stored.
+    return result.returncode == 0 and _keychain_get(service, account) == password
 
 
 def _keychain_delete(service: str, account: str) -> bool:
@@ -64,9 +120,9 @@ def _keychain_delete(service: str, account: str) -> bool:
         result = subprocess.run(
             ["security", "delete-generic-password", "-s", service, "-a", account],
             capture_output=True,
-            text=True
+            timeout=KEYCHAIN_TIMEOUT_SECONDS
         )
-        return result.returncode == 0 or "could not be found" in result.stderr.lower()
+        return result.returncode in (0, SECURITY_EXIT_ITEM_NOT_FOUND)
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
 
@@ -125,6 +181,9 @@ def set_namesilo_key(key: str) -> bool:
 
     On macOS: Uses Keychain.
     On other platforms: Uses config file.
+
+    Returns False if the key couldn't be stored. On macOS, raises ValueError
+    if the key can't be stored in Keychain and read back intact.
     """
     if _is_macos():
         return _keychain_set(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, key)
