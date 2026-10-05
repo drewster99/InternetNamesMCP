@@ -54,6 +54,20 @@ def generate_unique_name() -> str:
     return f"xyztest{suffix}"
 
 
+def generate_unique_handle() -> str:
+    """Generate a unique handle that fits every platform's length limit (X allows at most 15)."""
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=11))
+    return f"q{suffix}"
+
+
+def handle_statuses(data: dict) -> dict[str, str]:
+    """Map each platform in a check_handles response to "available", "taken" or "error: ..."."""
+    statuses = {platform: "available" for platform in data.get("available", [])}
+    for entry in data.get("unavailable", []):
+        statuses[entry["platform"]] = f"error: {entry['error']}" if "error" in entry else "taken"
+    return statuses
+
+
 @dataclass
 class TestResult:
     """Result of a single test."""
@@ -269,7 +283,7 @@ async def run_mcp_tests(runner: TestRunner, session: ClientSession):
     # Mixed valid/invalid platforms - should work with valid ones
     result = await session.call_tool("check_handles", {
         "username": "testuser",
-        "platforms": ["instagram", "invalid"],
+        "platforms": ["twitter", "invalid"],
     })
     text = extract_text(result)
     runner.test_json("mixed platforms uses valid ones", text, {
@@ -476,80 +490,47 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
             runner.test("summary has shortestAvailable", "shortestAvailable" in summary)
 
     # =========================================================================
-    # check_handles - real API (Sherlock, no Twitter for speed)
+    # check_handles - real API (all platforms)
     # =========================================================================
-    runner.section("check_handles - API tests via MCP (Sherlock)")
+    runner.section("check_handles - API tests via MCP (all platforms)")
 
-    # Check a known taken handle
-    result = await session.call_tool("check_handles", {
-        "username": "billgates",
-        "platforms": ["instagram", "youtube"],
-    })
-    text = extract_text(result)
-    data = runner.test_json("billgates is taken on major platforms", text, {
+    result = await session.call_tool("get_supported_socials", {})
+    handle_platforms = [p for p in json.loads(extract_text(result))["platforms"] if p != "subreddit"]
+
+    # Errors are failures here: a platform that cannot answer is a broken check.
+    result = await session.call_tool("check_handles", {"username": "natgeo"})
+    data = runner.test_json("natgeo check returns valid structure", extract_text(result), {
         "has available": lambda d: "available" in d,
         "has unavailable": lambda d: "unavailable" in d,
     })
+    if data:
+        statuses = handle_statuses(data)
+        for platform in handle_platforms:
+            status = statuses.get(platform, "missing")
+            runner.test(f"natgeo is taken on {platform}", status == "taken", status)
+        twitter_entry = next((e for e in data["unavailable"] if e["platform"] == "twitter"), {})
+        runner.test("taken entry has url", twitter_entry.get("url") == "https://x.com/natgeo")
 
-    if data and data.get("unavailable"):
-        # Check structure of unavailable entries
-        for entry in data["unavailable"]:
-            if isinstance(entry, dict) and "platform" in entry:
-                runner.test("unavailable entry has platform", True)
-                if "url" in entry:
-                    runner.test("unavailable entry has url", True)
-                break
-
-    # Check likely available handle
-    result = await session.call_tool("check_handles", {
-        "username": unique_name,
-        "platforms": ["instagram", "youtube"],
-    })
-    text = extract_text(result)
-    runner.test_json("unique name is likely available", text, {
+    unique_handle = generate_unique_handle()
+    result = await session.call_tool("check_handles", {"username": unique_handle})
+    data = runner.test_json(f"{unique_handle} check returns valid structure", extract_text(result), {
         "has available": lambda d: "available" in d,
-        "available has entries": lambda d: len(d["available"]) > 0,
     })
+    if data:
+        statuses = handle_statuses(data)
+        for platform in handle_platforms:
+            status = statuses.get(platform, "missing")
+            runner.test(f"{unique_handle} is available on {platform}", status == "available", status)
 
     # Test only_report_available
     result = await session.call_tool("check_handles", {
-        "username": "billgates",
-        "platforms": ["instagram"],
+        "username": "natgeo",
+        "platforms": ["twitter"],
         "only_report_available": True,
     })
-    text = extract_text(result)
-    runner.test_json("only_report_available omits unavailable", text, {
+    runner.test_json("only_report_available omits unavailable", extract_text(result), {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
-
-    # =========================================================================
-    # check_handles - Twitter (slower, separate test)
-    # =========================================================================
-    runner.section("check_handles - Twitter API test via MCP")
-
-    result = await session.call_tool("check_handles", {
-        "username": "elonmusk",
-        "platforms": ["twitter"],
-    })
-    text = extract_text(result)
-    data = runner.test_json("elonmusk Twitter check works", text, {
-        "has available": lambda d: "available" in d,
-        "has unavailable": lambda d: "unavailable" in d,
-    })
-
-    if data:
-        # elonmusk should be taken
-        unavail_platforms = [
-            e["platform"] if isinstance(e, dict) else e
-            for e in data.get("unavailable", [])
-        ]
-        runner.test(
-            "elonmusk is taken on Twitter",
-            "twitter" in unavail_platforms or any(
-                isinstance(e, dict) and e.get("platform") == "twitter"
-                for e in data.get("unavailable", [])
-            ),
-        )
 
     # =========================================================================
     # check_subreddits - real API
@@ -562,6 +543,7 @@ async def run_online_mcp_tests(runner: TestRunner, session: ClientSession):
     data = runner.test_json("r/programming exists", text, {
         "has available": lambda d: "available" in d,
         "has unavailable": lambda d: "unavailable" in d,
+        "no errors": lambda d: not any("error" in e for e in d["unavailable"]),
     })
 
     if data and data.get("unavailable"):

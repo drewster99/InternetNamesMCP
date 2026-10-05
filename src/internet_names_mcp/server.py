@@ -3,17 +3,14 @@ Internet Names MCP Server
 
 An MCP server for checking availability of:
 - Domain names (via NameSilo API or RDAP)
-- Social media handles (via Sherlock + Playwright for X/Twitter)
-- Subreddit names (via Reddit API)
+- Social media handles (see social_checks.py for how each platform is checked)
+- Subreddit names (via Reddit's JSON endpoints in a headless browser session)
 """
 
 import asyncio
 import json
 import logging
 import os
-import subprocess
-import sys
-import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -32,6 +29,12 @@ from .rdap_client import (
     DomainStatus,
     check_domains_async,
 )
+from .social_checks import (
+    AvailabilityStatus,
+    HandleResult,
+    Platform,
+    SocialChecker,
+)
 
 # Server version
 VERSION = "0.1.9"
@@ -46,29 +49,10 @@ mcp = MCPServer("internet-names", version=VERSION)
 NAMESILO_API_URL = "https://www.namesilo.com/api/checkRegisterAvailability"
 DEFAULT_TLDS = ["com", "io", "ai", "co", "app", "dev", "net", "org"]
 
-# Platforms supported by Sherlock + Twitter (via Playwright)
-SUPPORTED_PLATFORMS = [
-    "instagram",
-    "twitter",
-    "reddit",
-    "youtube",
-    "tiktok",
-    "twitch",
-    "threads",
-]
+SUPPORTED_PLATFORMS = [platform.value for platform in Platform]
 
 # All supported socials (includes subreddit which is checked separately)
 ALL_SOCIALS = SUPPORTED_PLATFORMS + ["subreddit"]
-
-# Mapping from our lowercase names to Sherlock's expected names
-SHERLOCK_PLATFORM_MAP = {
-    "instagram": "Instagram",
-    "reddit": "Reddit",
-    "youtube": "YouTube",
-    "tiktok": "TikTok",
-    "twitch": "Twitch",
-    "threads": "threads",
-}
 
 
 # =============================================================================
@@ -216,214 +200,50 @@ def _check_domains_internal(domains: list[str], api_key: str) -> list[DomainResu
 
 
 # =============================================================================
-# Social Media Handle Checking (Sherlock + Playwright for Twitter)
+# Social Media Handle and Subreddit Checking
 # =============================================================================
 
-def _check_sherlock(username: str, platforms: list[str]) -> dict[str, dict]:
-    """Check username via Sherlock (excludes Twitter which is handled separately)."""
-    # Filter out twitter - we handle that with Playwright
-    sherlock_platforms = [SHERLOCK_PLATFORM_MAP[p] for p in platforms if p in SHERLOCK_PLATFORM_MAP]
-
-    if not sherlock_platforms:
-        return {}
-
-    cmd = [
-        "sherlock", username,
-        "--print-all", "--no-txt", "--timeout", "15"
-    ]
-    for p in sherlock_platforms:
-        cmd.extend(["--site", p])
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-        output = result.stdout + result.stderr
-    except subprocess.TimeoutExpired:
-        return {p.lower(): {"available": None, "error": "Timeout"} for p in sherlock_platforms}
-    except FileNotFoundError:
-        return {p.lower(): {"available": None, "error": "sherlock not found"} for p in sherlock_platforms}
-
-    results = {}
-
-    for line in output.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("[*]"):
-            continue
-
-        if line.startswith("[+]"):
-            parts = line[4:].split(": ", 1)
-            if len(parts) >= 1:
-                platform = parts[0].lower()
-                url = parts[1] if len(parts) > 1 else None
-                results[platform] = {"available": False, "url": url}
-
-        elif line.startswith("[-]"):
-            parts = line[4:].split(": ", 1)
-            if len(parts) == 2:
-                platform = parts[0].lower()
-                status = parts[1]
-                if status == "Not Found!":
-                    results[platform] = {"available": True}
-                elif "Error" in status or "Illegal" in status:
-                    results[platform] = {"available": None, "error": status}
-                else:
-                    results[platform] = {"available": True}
-
-    return results
+def _parse_platforms(platforms: list[str] | None) -> list[Platform]:
+    """Resolve requested platform names (all platforms when None), dropping unsupported ones."""
+    if platforms is None:
+        return list(Platform)
+    requested = dict.fromkeys(p.strip().lower() for p in platforms)
+    return [Platform(p) for p in requested if p in SUPPORTED_PLATFORMS]
 
 
-async def _install_chromium() -> tuple[bool, str]:
-    """
-    Install Chromium browser for Playwright.
-
-    Returns (success, message) tuple.
-    """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "playwright", "install", "chromium",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            return True, "Chromium installed successfully"
+def _split_handle_results(
+    platforms: list[Platform],
+    results: dict[Platform, HandleResult],
+) -> tuple[list[str], list[dict]]:
+    """Split handle results into the response's available names and unavailable entries."""
+    available_list: list[str] = []
+    unavailable_list: list[dict] = []
+    for platform in platforms:
+        result = results[platform]
+        if result.status == AvailabilityStatus.AVAILABLE:
+            available_list.append(platform.value)
+        elif result.status == AvailabilityStatus.ERROR:
+            unavailable_list.append({"platform": platform.value, "error": result.error})
         else:
-            error_output = stderr.decode() or stdout.decode()
-            return False, f"Installation failed: {error_output[:200]}"
-    except FileNotFoundError:
-        return False, "Python executable not found"
-    except Exception as e:
-        return False, f"Installation error: {str(e)[:100]}"
+            entry = {"platform": platform.value}
+            if result.url:
+                entry["url"] = result.url
+            if result.note:
+                entry["note"] = result.note
+            unavailable_list.append(entry)
+    return available_list, unavailable_list
 
 
-async def _check_twitter(username: str, _retry: bool = True) -> dict:
-    """Check Twitter/X username using Playwright (async)."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        return {"available": None, "error": "playwright not installed. Run: pip install playwright"}
-
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-            )
-            page = await context.new_page()
-
-            url = f"https://x.com/{username}"
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(3000)
-
-            empty_state = await page.query_selector('[data-testid="empty_state_header_text"]')
-
-            if empty_state:
-                text = (await empty_state.inner_text()).replace("\u2019", "'").lower()
-                if "doesn't exist" in text:
-                    await browser.close()
-                    return {"available": True}
-                elif "suspended" in text:
-                    await browser.close()
-                    return {"available": False, "url": url, "note": "suspended"}
-
-            user_name = await page.query_selector('[data-testid="UserName"]')
-            if user_name:
-                await browser.close()
-                return {"available": False, "url": url}
-
-            body_text = (await page.inner_text("body")).replace("\u2019", "'")
-            await browser.close()
-
-            if "This account doesn't exist" in body_text:
-                return {"available": True}
-            elif f"@{username.lower()}" in body_text.lower():
-                return {"available": False, "url": url}
-            else:
-                return {"available": None, "error": "Could not determine"}
-
-    except Exception as e:
-        error_str = str(e)
-        if "Executable doesn't exist" in error_str or "browserType.launch" in error_str.lower():
-            if _retry:
-                # Auto-install chromium and retry once
-                success, msg = await _install_chromium()
-                if success:
-                    return await _check_twitter(username, _retry=False)
-                else:
-                    return {"available": None, "error": f"Chromium auto-install failed: {msg}"}
-            else:
-                return {"available": None, "error": "Chromium not installed. Run: playwright install chromium"}
-        return {"available": None, "error": error_str[:100]}
-
-
-async def _check_handles_internal(username: str, platforms: list[str]) -> dict[str, dict]:
-    """Check username across multiple platforms."""
-    results = {}
-
-    # Check non-Twitter platforms via Sherlock
-    sherlock_results = _check_sherlock(username, [p for p in platforms if p != "twitter"])
-    results.update(sherlock_results)
-
-    # Check Twitter via Playwright if requested
-    if "twitter" in platforms:
-        results["twitter"] = await _check_twitter(username)
-
-    # Fill in missing platforms
-    for p in platforms:
-        if p not in results:
-            results[p] = {"available": None, "error": "No response"}
-
-    return results
-
-
-# =============================================================================
-# Subreddit Checking (Reddit API)
-# =============================================================================
-
-def _check_subreddits_internal(names: list[str]) -> list[dict]:
-    """Check subreddit availability via Reddit JSON API."""
-    results = []
-    headers = {"User-Agent": "SubredditChecker/1.0"}
-
-    with httpx.Client(headers=headers, timeout=10) as client:
-        for name in names:
-            name = name.lower().strip()
-            if name.startswith("r/"):
-                name = name[2:]
-
-            # Skip empty names
-            if not name:
-                continue
-
-            url = f"https://www.reddit.com/r/{name}/about.json"
-
-            try:
-                response = client.get(url, follow_redirects=True)
-
-                if response.status_code == 404:
-                    results.append({"name": name, "available": True})
-                elif response.status_code == 403:
-                    results.append({"name": name, "available": False, "note": "private"})
-                elif response.status_code == 200:
-                    data = response.json()
-                    sub_data = data.get("data", {})
-                    if sub_data.get("display_name"):
-                        subscribers = sub_data.get("subscribers", 0)
-                        results.append({
-                            "name": name,
-                            "available": False,
-                            "subscribers": subscribers
-                        })
-                    else:
-                        results.append({"name": name, "available": True})
-                else:
-                    results.append({"name": name, "available": None, "error": f"HTTP {response.status_code}"})
-
-            except Exception as e:
-                results.append({"name": name, "available": None, "error": str(e)[:100]})
-
-            time.sleep(0.5)  # Rate limiting
-
-    return results
+def _normalize_subreddit_names(names: list[str]) -> list[str]:
+    """Lowercase names, strip any r/ prefix, and drop empty names."""
+    normalized = []
+    for name in names:
+        name = name.lower().strip()
+        if name.startswith("r/"):
+            name = name[2:]
+        if name:
+            normalized.append(name)
+    return normalized
 
 
 # =============================================================================
@@ -583,14 +403,14 @@ async def check_handles(
     """
     Check social media handle/username availability across platforms.
 
-    This tool may be long-running (30–90 seconds), especially when checking
-    many platforms. Twitter/X checking alone takes ~4 seconds via headless browser;
-    other platforms are checked in parallel.
+    This tool may take 10–30 seconds. All platforms are checked in parallel;
+    Instagram, Threads and Reddit need a headless browser, which takes a few
+    seconds to start.
 
     Args:
         username: The username/handle to check
         platforms: List of platforms to check (default: all supported platforms)
-                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads
+                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky
         only_report_available: If true, only return available handles in response
 
     Returns:
@@ -601,43 +421,14 @@ async def check_handles(
 
     username = username.strip()
 
-    supported = SUPPORTED_PLATFORMS
-    if platforms is None:
-        platforms = supported.copy()
-    else:
-        # Normalize to lowercase
-        platforms = [p.lower() for p in platforms]
-        # Check if twitter was requested but not available
-        if "twitter" in platforms and "twitter" not in supported:
-            return json.dumps({
-                "error": "Twitter checking unavailable. Chromium browser failed to install. Try manually: playwright install chromium"
-            })
-        # Filter to only supported platforms
-        platforms = [p for p in platforms if p in supported]
-
-    if not platforms:
+    selected_platforms = _parse_platforms(platforms)
+    if not selected_platforms:
         return json.dumps({"error": "No valid platforms specified"})
 
-    results = await _check_handles_internal(username, platforms)
+    async with SocialChecker() as checker:
+        results = await checker.check_handles(username, selected_platforms)
 
-    available_list = []
-    unavailable_list = []
-
-    for platform in platforms:
-        info = results.get(platform, {"available": None, "error": "Unknown"})
-
-        if info.get("error"):
-            # Treat errors as unavailable with note
-            unavailable_list.append({"platform": platform, "error": info["error"]})
-        elif info.get("available"):
-            available_list.append(platform)
-        else:
-            entry = {"platform": platform}
-            if info.get("url"):
-                entry["url"] = info["url"]
-            if info.get("note"):
-                entry["note"] = info["note"]
-            unavailable_list.append(entry)
+    available_list, unavailable_list = _split_handle_results(selected_platforms, results)
 
     response = {
         "available": available_list,
@@ -650,7 +441,7 @@ async def check_handles(
 
 
 @mcp.tool()
-def check_subreddits(
+async def check_subreddits(
     names: list[str],
     only_report_available: bool = False
 ) -> str:
@@ -667,23 +458,23 @@ def check_subreddits(
     if not names:
         return json.dumps({"error": "No subreddit names provided"})
 
-    results = _check_subreddits_internal(names)
+    async with SocialChecker() as checker:
+        results = await checker.check_subreddits(_normalize_subreddit_names(names))
 
     available_list = []
     unavailable_list = []
 
     for r in results:
-        name = r["name"]
-        if r.get("error"):
-            unavailable_list.append({"name": name, "error": r["error"]})
-        elif r.get("available"):
-            available_list.append(name)
+        if r.status == AvailabilityStatus.ERROR:
+            unavailable_list.append({"name": r.name, "error": r.error})
+        elif r.status == AvailabilityStatus.AVAILABLE:
+            available_list.append(r.name)
         else:
-            entry = {"name": name}
-            if r.get("subscribers"):
-                entry["subscribers"] = r["subscribers"]
-            if r.get("note"):
-                entry["note"] = r["note"]
+            entry = {"name": r.name}
+            if r.subscribers is not None:
+                entry["subscribers"] = r.subscribers
+            if r.note:
+                entry["note"] = r.note
             unavailable_list.append(entry)
 
     response = {
@@ -710,9 +501,9 @@ async def check_everything(
     Comprehensive check across domains and social media.
 
     This tool may be long-running. Domain checks are fast, but social handle
-    checking (via headless browser for Twitter/X and parallel requests for other
-    platforms) can take 30–90 seconds depending on the number of names and
-    platforms checked.
+    checking (parallel requests per name, plus a headless browser for Instagram,
+    Threads and Reddit) can take 30–90 seconds depending on the number of names
+    and platforms checked.
 
     Generates name combinations from components and checks domains first (fast),
     then checks social media handles for names that pass the domain check.
@@ -724,7 +515,7 @@ async def check_everything(
               a leading dot. Example: ["com", "io", "ai"] — NOT "com\nio\nai" or "com,io,ai".
               Default: ["com", "net", "org", "io", "ai"]
         platforms: Social platforms to check (default: all).
-                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads
+                   Supported: instagram, twitter, reddit, youtube, tiktok, twitch, threads, bluesky
         method: Domain lookup method - "auto" (default, uses namesilo if API key available,
                 otherwise rdap), "rdap" (direct registry queries), "namesilo" (requires API key)
         require_all_tlds_available: If true, a name must be available in ALL specified TLDs
@@ -746,19 +537,8 @@ async def check_everything(
     if method not in ("rdap", "namesilo", "auto"):
         return json.dumps({"error": f"Invalid method '{method}'. Use 'rdap', 'namesilo', or 'auto'"})
 
-    supported = SUPPORTED_PLATFORMS
-    if platforms is None:
-        platforms = supported.copy()
-    else:
-        platforms = [p.lower() for p in platforms]
-        # Check if twitter was requested but not available
-        if "twitter" in platforms and "twitter" not in supported:
-            return json.dumps({
-                "error": "Twitter checking unavailable. Chromium browser failed to install. Try manually: playwright install chromium"
-            })
-        platforms = [p for p in platforms if p in supported]
-
-    if not platforms:
+    selected_platforms = _parse_platforms(platforms)
+    if not selected_platforms:
         return json.dumps({"error": "No valid platforms specified"})
 
     # Generate name combinations from components
@@ -859,29 +639,15 @@ async def check_everything(
     available_handles: dict[str, list[str]] = {}
     unavailable_handles: dict[str, list[dict]] = {}
 
-    for basename in domain_successful_basenames:
-        handle_results = await _check_handles_internal(basename, platforms)
+    async with SocialChecker() as checker:
+        for basename in domain_successful_basenames:
+            handle_results = await checker.check_handles(basename, selected_platforms)
+            available_for_name, unavailable_for_name = _split_handle_results(selected_platforms, handle_results)
 
-        available_for_name = []
-        unavailable_for_name = []
-
-        for platform in platforms:
-            info = handle_results.get(platform, {"available": None, "error": "Unknown"})
-
-            if info.get("error"):
-                unavailable_for_name.append({"platform": platform, "error": info["error"]})
-            elif info.get("available"):
-                available_for_name.append(platform)
-            else:
-                entry = {"platform": platform}
-                if info.get("url"):
-                    entry["url"] = info["url"]
-                unavailable_for_name.append(entry)
-
-        if available_for_name:
-            available_handles[basename] = available_for_name
-        if unavailable_for_name:
-            unavailable_handles[basename] = unavailable_for_name
+            if available_for_name:
+                available_handles[basename] = available_for_name
+            if unavailable_for_name:
+                unavailable_handles[basename] = unavailable_for_name
 
     # Build response
     response = {
@@ -902,7 +668,7 @@ async def check_everything(
     fully_available = []
     for basename in domain_successful_basenames:
         if basename in available_handles:
-            if len(available_handles[basename]) == len(platforms):
+            if len(available_handles[basename]) == len(selected_platforms):
                 fully_available.append(basename)
 
     if fully_available:

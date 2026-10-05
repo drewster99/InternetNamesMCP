@@ -5,7 +5,7 @@ An MCP server for checking availability of domain names, social media handles, a
 ## Features
 
 - **Domain names** - Check availability via RDAP (free) or NameSilo API (free, but requires API key - responses include domain prices too)
-- **Social media handles** - Instagram, Twitter/X, Reddit, YouTube, TikTok, Twitch, Threads
+- **Social media handles** - Instagram, Twitter/X, Reddit, YouTube, TikTok, Twitch, Threads, Bluesky
 - **Subreddits** - Check if subreddit names are available on Reddit
 - **Comprehensive search** - Generate name combinations and check everything at once
 
@@ -91,7 +91,7 @@ Returns list of supported social media platforms.
 **Response:**
 ```json
 {
-  "platforms": ["instagram", "twitter", "reddit", "youtube", "tiktok", "twitch", "threads", "subreddit"]
+  "platforms": ["instagram", "twitter", "reddit", "youtube", "tiktok", "twitch", "threads", "bluesky", "subreddit"]
 }
 ```
 
@@ -141,9 +141,24 @@ Check social media handle availability across platforms.
 | `platforms` | list[str] | all platforms | Platforms to check |
 | `only_report_available` | bool | `false` | If true, omit unavailable handles from response |
 
-Supported platforms: `instagram`, `twitter`, `reddit`, `youtube`, `tiktok`, `twitch`, `threads`
+Supported platforms: `instagram`, `twitter`, `reddit`, `youtube`, `tiktok`, `twitch`, `threads`, `bluesky`
 
-Note: Twitter/X checking uses a headless browser and takes ~4 seconds.
+All platforms are checked in parallel; a typical call takes 2–5 seconds. Instagram, Threads and Reddit use a headless Chromium browser (installed automatically on first use).
+
+How each platform is checked, and what "available" means:
+
+| Platform | Method | "Available" means |
+|----------|--------|-------------------|
+| `twitter` | X signup's username availability endpoint | X would let you register it |
+| `instagram` | Profile page, then Instagram signup's username validation | Instagram would let you register it |
+| `threads` | Follows Instagram (Threads handles are Instagram usernames); profile page for the URL | Instagram would let you register it |
+| `bluesky` | `com.atproto.temp.checkHandleAvailability` on bsky.social, for `<name>.bsky.social` | Bluesky would let you register it |
+| `reddit` | Reddit's `username_available` endpoint | Reddit would let you register it |
+| `tiktok` | Profile page's embedded user status | No account found (banned or removed accounts look the same) |
+| `youtube` | `@handle` page status | No channel found (reserved or terminated handles may look the same) |
+| `twitch` | Twitch web GraphQL user lookup, including suspended and deleted accounts | No account found |
+
+A platform is reported as available only when it positively says so. Block pages, rate limits and unexpected responses are reported as errors (in `unavailable`, with an `error` field), never as available or taken.
 
 **Response:**
 ```json
@@ -151,7 +166,9 @@ Note: Twitter/X checking uses a headless browser and takes ~4 seconds.
   "available": ["instagram", "tiktok", "youtube"],
   "unavailable": [
     {"platform": "twitter", "url": "https://x.com/myapp"},
-    {"platform": "reddit", "url": "https://reddit.com/user/myapp"}
+    {"platform": "reddit", "url": "https://www.reddit.com/user/myapp"},
+    {"platform": "bluesky", "note": "Reserved or not allowed by Bluesky"},
+    {"platform": "twitch", "error": "Twitch returned HTTP 503"}
   ]
 }
 ```
@@ -178,6 +195,8 @@ Check subreddit name availability on Reddit.
   ]
 }
 ```
+
+Subreddits are looked up through Reddit's `about.json` inside a headless browser session. `note` carries Reddit's reason when a subreddit is held but not public (`private`, `gold_only`, `quarantined`, `banned`, ...), or explains why a name is not a valid subreddit name.
 
 ---
 
@@ -265,7 +284,7 @@ The `devsetup.sh` script handles virtual environment creation and dependency ins
 git clone <repo-url> InternetNamesMCP
 cd InternetNamesMCP
 source devsetup.sh          # Creates .venv, activates it, installs dependencies
-playwright install chromium # Required for Twitter/X handle checking
+playwright install chromium # Required for Instagram, Threads and Reddit checks (auto-installed on first use otherwise)
 ```
 
 Options:
@@ -340,13 +359,6 @@ The cache is automatically refreshed when expired (default 24h TTL from IANA's C
 
 ## Troubleshooting
 
-### "sherlock not found"
-
-Sherlock is installed automatically as a dependency. If you see this error, reinstall:
-```bash
-uvx --reinstall internet-names-mcp
-```
-
 ### "playwright not installed" or Chromium errors
 
 Install Playwright browser:
@@ -359,9 +371,13 @@ Or with uvx:
 uvx --from playwright install chromium
 ```
 
-### Twitter checks fail or timeout
+### "Instagram is throttling username checks"
 
-Twitter/X checks use a headless browser which can be slow or blocked. If checks consistently fail, Twitter may be rate-limiting or blocking automated access.
+Instagram limits how many signup username validations one IP address can make. While throttled it answers "not available" for every name; the server detects this with a random control name and reports an error (noting whether a profile exists) instead of a wrong answer. In testing the throttle tripped after roughly 30–40 checks from one IP address. Wait a while and retry.
+
+### Reddit errors ("bot-check page" or "without data")
+
+Reddit blocks non-browser clients and rate-limits by IP address. The server passes Reddit's JavaScript check in a headless browser, but heavy use can still get the IP temporarily blocked. Wait a while and retry.
 
 ## Copyright
 

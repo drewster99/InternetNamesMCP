@@ -46,6 +46,20 @@ def generate_unique_name() -> str:
     return f"xyztest{suffix}"
 
 
+def generate_unique_handle() -> str:
+    """Generate a unique handle that fits every platform's length limit (X allows at most 15)."""
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=11))
+    return f"q{suffix}"
+
+
+def handle_statuses(data: dict) -> dict[str, str]:
+    """Map each platform in a check_handles response to "available", "taken" or "error: ..."."""
+    statuses = {platform: "available" for platform in data.get("available", [])}
+    for entry in data.get("unavailable", []):
+        statuses[entry["platform"]] = f"error: {entry['error']}" if "error" in entry else "taken"
+    return statuses
+
+
 from internet_names_mcp.server import (
     get_supported_socials,
     check_domains,
@@ -262,7 +276,7 @@ def run_offline_tests(runner: TestRunner):
     })
 
     # Mixed valid/invalid platforms - should work with valid ones
-    result = run_sync(check_handles("testuser", platforms=["instagram", "invalid"]))
+    result = run_sync(check_handles("testuser", platforms=["twitter", "invalid"]))
     runner.test_json("mixed platforms uses valid ones", result, {
         "has available key": lambda d: "available" in d,
         "no error": lambda d: "error" not in d,
@@ -274,7 +288,7 @@ def run_offline_tests(runner: TestRunner):
     runner.section("check_subreddits - edge cases")
 
     # Empty list
-    result = check_subreddits([])
+    result = run_sync(check_subreddits([]))
     runner.test_json("empty list returns error", result, {
         "has error": lambda d: "error" in d,
     })
@@ -449,55 +463,42 @@ def run_online_tests(runner: TestRunner):
     # =========================================================================
     runner.section("check_handles - API tests (all platforms)")
 
-    # Check a known taken handle across all platforms
-    result = run_sync(check_handles("elonmusk"))
-    data = runner.test_json("elonmusk check returns valid structure", result, {
+    # Errors are failures here: a platform that cannot answer is a broken check.
+    result = run_sync(check_handles("natgeo"))
+    data = runner.test_json("natgeo check returns valid structure", result, {
         "has available": lambda d: "available" in d,
         "has unavailable": lambda d: "unavailable" in d,
     })
-
     if data:
-        # Show results for each platform
-        available = data.get("available", [])
-        unavailable = data.get("unavailable", [])
-
-        # Build a map of platform -> status
-        platform_status = {}
-        for p in available:
-            platform_status[p] = "available"
-        for entry in unavailable:
-            if isinstance(entry, dict):
-                p = entry.get("platform", "?")
-                if entry.get("error"):
-                    platform_status[p] = f"error: {entry['error']}"
-                elif entry.get("url"):
-                    platform_status[p] = f"taken: {entry['url']}"
-                else:
-                    platform_status[p] = "taken"
-            else:
-                platform_status[entry] = "taken"
-
-        # Test and display each platform
+        statuses = handle_statuses(data)
         for platform in SUPPORTED_PLATFORMS:
-            status = platform_status.get(platform, "unknown")
-            if status == "available":
-                runner.test(f"{platform}: available", True)
-            elif status.startswith("taken"):
-                runner.test(f"{platform}: {status}", True)
-            elif status.startswith("error"):
-                runner.test(f"{platform}: {status}", False, status)
-            else:
-                runner.test(f"{platform}: {status}", False, "unexpected status")
+            status = statuses.get(platform, "missing")
+            runner.test(f"natgeo is taken on {platform}", status == "taken", status)
 
-    # Check likely available handle
-    result = run_sync(check_handles(unique_name, platforms=["instagram", "youtube"]))
-    runner.test_json(f"{unique_name} is likely available", result, {
+    unique_handle = generate_unique_handle()
+    result = run_sync(check_handles(unique_handle))
+    data = runner.test_json(f"{unique_handle} check returns valid structure", result, {
         "has available": lambda d: "available" in d,
-        "available has entries": lambda d: len(d["available"]) > 0,
     })
+    if data:
+        statuses = handle_statuses(data)
+        for platform in SUPPORTED_PLATFORMS:
+            status = statuses.get(platform, "missing")
+            runner.test(f"{unique_handle} is available on {platform}", status == "available", status)
+
+    # A malformed name must never be reported available.
+    result = run_sync(check_handles("bad!name"))
+    data = runner.test_json("bad!name check returns valid structure", result, {
+        "has unavailable": lambda d: "unavailable" in d,
+    })
+    if data:
+        statuses = handle_statuses(data)
+        for platform in SUPPORTED_PLATFORMS:
+            status = statuses.get(platform, "missing")
+            runner.test(f"bad!name is rejected on {platform}", status == "taken", status)
 
     # Test only_report_available
-    result = run_sync(check_handles("billgates", platforms=["instagram"], only_report_available=True))
+    result = run_sync(check_handles("natgeo", platforms=["twitter"], only_report_available=True))
     runner.test_json("only_report_available omits unavailable", result, {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
@@ -507,42 +508,25 @@ def run_online_tests(runner: TestRunner):
     # =========================================================================
     runner.section("check_subreddits - API tests")
 
-    # Check a known existing subreddit
-    result = check_subreddits(["programming"])
-    data = runner.test_json("r/programming exists", result, {
+    result = run_sync(check_subreddits(["programming", "r/python", unique_name, "the_donald", "bad-name"]))
+    data = runner.test_json("subreddit check returns valid structure", result, {
         "has available": lambda d: "available" in d,
         "has unavailable": lambda d: "unavailable" in d,
+        "no errors": lambda d: not any("error" in e for e in d["unavailable"]),
     })
-
-    if data and data.get("unavailable"):
-        # Find programming in unavailable
-        prog = None
-        for entry in data["unavailable"]:
-            if isinstance(entry, dict) and entry.get("name") == "programming":
-                prog = entry
-                break
-        if prog:
-            runner.test("programming has subscribers count", "subscribers" in prog)
-            runner.test("subscribers is int", isinstance(prog.get("subscribers"), int))
-
-    # Check likely available subreddit
-    result = check_subreddits([unique_name])
-    runner.test_json("unique subreddit is available", result, {
-        "has available": lambda d: "available" in d,
-        "unique in available": lambda d: unique_name in d["available"],
-    })
-
-    # Test r/ prefix stripping
-    result = check_subreddits(["r/programming"])
-    data = runner.test_json("r/ prefix is stripped", result, {
-        "programming in unavailable": lambda d: any(
-            (isinstance(e, dict) and e.get("name") == "programming")
-            for e in d.get("unavailable", [])
-        ),
-    })
+    if data:
+        unavailable = {e["name"]: e for e in data["unavailable"]}
+        programming = unavailable.get("programming", {})
+        runner.test("programming is taken", "programming" in unavailable)
+        runner.test("programming has int subscribers", isinstance(programming.get("subscribers"), int))
+        runner.test("r/ prefix is stripped", "python" in unavailable)
+        runner.test("unique subreddit is available", unique_name in data["available"])
+        runner.test("banned subreddit is taken with reason",
+                    unavailable.get("the_donald", {}).get("note") == "banned")
+        runner.test("malformed subreddit name is rejected", "bad-name" in unavailable)
 
     # Test only_report_available
-    result = check_subreddits(["programming"], only_report_available=True)
+    result = run_sync(check_subreddits(["programming"], only_report_available=True))
     runner.test_json("only_report_available omits unavailable", result, {
         "no unavailable key": lambda d: "unavailable" not in d,
     })
