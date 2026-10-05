@@ -289,7 +289,7 @@ API key lookup order (first match wins):
 The `devsetup.sh` script handles virtual environment creation and dependency installation:
 
 ```bash
-git clone <repo-url> InternetNamesMCP
+git clone https://github.com/drewster99/InternetNamesMCP.git InternetNamesMCP
 cd InternetNamesMCP
 source devsetup.sh          # Creates .venv, activates it, installs dependencies
 playwright install chromium # Required for Instagram, Threads and Reddit checks (auto-installed on first use otherwise)

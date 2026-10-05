@@ -37,8 +37,8 @@ dev = [
 internet-names-mcp = "internet_names_mcp:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/InternetNamesMCP"
-Repository = "https://github.com/yourusername/InternetNamesMCP"
+Homepage = "https://github.com/drewster99/InternetNamesMCP"
+Repository = "https://github.com/drewster99/InternetNamesMCP"
 
 [build-system]
 requires = ["hatchling"]

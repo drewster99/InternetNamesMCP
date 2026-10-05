@@ -35,7 +35,6 @@ from .social_checks import (
 )
 
 
-
 class _RedactKeyQueryParameterFilter(logging.Filter):
     """Masks `key=` query parameter values in log messages."""
 

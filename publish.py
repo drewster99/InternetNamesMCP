@@ -173,7 +173,7 @@ def main():
 
     # Build
     print("\nBuilding package...")
-    result = run([sys.executable, "-m", "build"])
+    result = run([sys.executable, "-m", "build"], check=False)
     if result.returncode != 0:
         print(f"  ✗ Build failed: {result.stderr}")
         sys.exit(1)
