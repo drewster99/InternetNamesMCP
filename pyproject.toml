@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=2.0.0,<3",
     "httpx>=0.25.0",
     "sherlock-project>=0.14.0",
     "playwright>=1.40.0",

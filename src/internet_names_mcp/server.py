@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .config import get_namesilo_key
 
@@ -37,8 +37,7 @@ from .rdap_client import (
 VERSION = "0.1.8"
 
 # Initialize the MCP server
-mcp = FastMCP("internet-names")
-mcp._mcp_server.version = VERSION
+mcp = MCPServer("internet-names", version=VERSION)
 
 # =============================================================================
 # Constants

@@ -169,7 +169,7 @@ async def run_mcp_tests(runner: TestRunner, session: ClientSession):
     # Check tool schemas
     for tool in tools:
         if tool.name == "check_domains":
-            schema = tool.inputSchema
+            schema = tool.input_schema
             runner.test(
                 "check_domains has names parameter",
                 "names" in schema.get("properties", {}),
@@ -183,7 +183,7 @@ async def run_mcp_tests(runner: TestRunner, session: ClientSession):
                 "method" in schema.get("properties", {}),
             )
         if tool.name == "check_everything":
-            schema = tool.inputSchema
+            schema = tool.input_schema
             runner.test(
                 "check_everything has method parameter",
                 "method" in schema.get("properties", {}),
@@ -754,15 +754,15 @@ async def main_async():
             async with ClientSession(read_stream, write_stream) as session:
                 # Initialize the session
                 init_result = await session.initialize()
-                server_version = init_result.serverInfo.version
-                print(f"Connected to: {init_result.serverInfo.name} v{server_version}")
+                server_version = init_result.server_info.version
+                print(f"Connected to: {init_result.server_info.name} v{server_version}")
 
                 runner.section("MCP Connection")
                 runner.test("server initialized", True)
                 runner.test(
                     "server name is 'internet-names'",
-                    init_result.serverInfo.name == "internet-names",
-                    f"Got '{init_result.serverInfo.name}'",
+                    init_result.server_info.name == "internet-names",
+                    f"Got '{init_result.server_info.name}'",
                 )
                 runner.test(
                     "server version is set",
