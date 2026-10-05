@@ -1,6 +1,6 @@
 [project]
 name = "internet-names-mcp"
-version = "0.1.10"
+dynamic = ["version"]
 description = "MCP server for checking availability of domain names, social media handles, and subreddits"
 readme = "README.md"
 license = "MIT"
@@ -41,6 +41,9 @@ Repository = "https://github.com/yourusername/InternetNamesMCP"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/internet_names_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/internet_names_mcp"]

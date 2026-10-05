@@ -68,8 +68,8 @@ from internet_names_mcp.server import (
     check_everything,
     SUPPORTED_PLATFORMS,
     ALL_SOCIALS,
-    VERSION,
 )
+from internet_names_mcp import __version__
 
 from internet_names_mcp.rdap_bootstrap import (
     get_rdap_server,
@@ -657,7 +657,7 @@ def main():
 
     print("\n" + "=" * 60)
     print("  INTERNET NAMES MCP SERVER - TEST SUITE")
-    print(f"  Version: {VERSION}")
+    print(f"  Version: {__version__}")
     print("=" * 60)
 
     start_time = time.time()

@@ -16,6 +16,7 @@ from typing import Literal
 import httpx
 from mcp.server.mcpserver import MCPServer
 
+from . import __version__
 from .config import get_namesilo_key
 
 # Suppress httpx request logging by default (shows API keys in URLs)
@@ -34,11 +35,8 @@ from .social_checks import (
     SocialChecker,
 )
 
-# Server version
-VERSION = "0.1.10"
-
 # Initialize the MCP server
-mcp = MCPServer("internet-names", version=VERSION)
+mcp = MCPServer("internet-names", version=__version__)
 
 # =============================================================================
 # Constants
@@ -243,7 +241,7 @@ def version() -> str:
     Returns:
         Version string including server name and version number.
     """
-    return f"Internet Names MCP Server version {VERSION}"
+    return f"Internet Names MCP Server version {__version__}"
 
 
 @mcp.tool()
