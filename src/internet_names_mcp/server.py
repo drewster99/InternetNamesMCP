@@ -403,9 +403,9 @@ async def check_handles(
     """
     Check social media handle/username availability across platforms.
 
-    This tool may take 10–30 seconds. All platforms are checked in parallel;
-    Instagram, Threads and Reddit need a headless browser, which takes a few
-    seconds to start.
+    All platforms are checked in parallel; a call usually takes 2–5 seconds.
+    Instagram, Threads and Reddit use a headless browser, which is downloaded
+    on first use (that first call can take a minute or more).
 
     Args:
         username: The username/handle to check

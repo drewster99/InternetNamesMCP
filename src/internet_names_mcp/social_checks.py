@@ -365,16 +365,18 @@ class SocialChecker:
 
     async def close(self) -> None:
         """Shut down the browser (if launched) and the HTTP client."""
-        if self._browser is not None:
-            await self._browser.close()
+        try:
+            if self._browser is not None:
+                await self._browser.close()
+            if self._playwright is not None:
+                await self._playwright.stop()
+        finally:
             self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
             self._playwright = None
-        self._browser_context = None
-        self._reddit_request = None
-        self._instagram_signup_page = None
-        await self._http.aclose()
+            self._browser_context = None
+            self._reddit_request = None
+            self._instagram_signup_page = None
+            await self._http.aclose()
 
     # -------------------------------------------------------------------------
     # Public API
@@ -439,7 +441,8 @@ class SocialChecker:
             return self._browser_context
 
     async def _launch_browser_context(self) -> BrowserContext:
-        self._playwright = await async_playwright().start()
+        if self._playwright is None:
+            self._playwright = await async_playwright().start()
         try:
             browser = await self._playwright.chromium.launch(headless=True)
         except PlaywrightError as e:
@@ -525,14 +528,18 @@ class SocialChecker:
 
     async def _check_instagram(self, username: str) -> HandleResult:
         async with self._instagram_lock:
-            # Cached because Threads asks for the same verdict, and re-entering an
-            # unchanged value into the form would not trigger validation again.
+            # Cached (errors included) because Threads asks for the same verdict, and
+            # repeating a failed check would spend more of Instagram's throttle budget.
             cached = self._instagram_results.get(username)
             if cached is not None:
                 return cached
-            result = await self._judge_instagram_username(username)
-            if result.status != AvailabilityStatus.ERROR:
-                self._instagram_results[username] = result
+            try:
+                result = await self._judge_instagram_username(username)
+            except PlaywrightTimeoutError:
+                result = _failed(f"Timed out waiting for {Platform.INSTAGRAM.value} to respond")
+            except CHECK_FAILURES as e:
+                result = _failed(_describe(e))
+            self._instagram_results[username] = result
             return result
 
     async def _judge_instagram_username(self, username: str) -> HandleResult:
@@ -552,10 +559,8 @@ class SocialChecker:
         validation = await self._validate_instagram_username(username)
         if validation.verdict == InstagramVerdict.ACCEPTED:
             return _available()
-        if validation.verdict == InstagramVerdict.REJECTED:
-            return _unavailable(note=validation.message)
 
-        # "Not available" with no profile is also how Instagram answers every name while
+        # Any refusal with no profile is also how Instagram answers every name while
         # throttling. A random control name tells the two apart.
         control_name = "".join(random.choices(string.ascii_lowercase, k=INSTAGRAM_CONTROL_NAME_LENGTH))
         control = await self._validate_instagram_username(control_name)
@@ -564,6 +569,8 @@ class SocialChecker:
                 "No Instagram profile exists, but Instagram is throttling signup checks (it refused a random "
                 "control name), so availability is unconfirmed; try again later"
             )
+        if validation.verdict == InstagramVerdict.REJECTED:
+            return _unavailable(note=validation.message)
         return _unavailable(note="Reserved by Instagram or held by a removed or deactivated account")
 
     async def _validate_instagram_username(self, username: str) -> InstagramValidation:
@@ -582,10 +589,7 @@ class SocialChecker:
         return _interpret_instagram_validation(username, await response.json())
 
     async def _check_threads(self, username: str) -> HandleResult:
-        try:
-            instagram = await self._check_instagram(username)
-        except CHECK_FAILURES as e:
-            return _failed(f"Threads availability depends on Instagram, whose check failed: {_describe(e)}")
+        instagram = await self._check_instagram(username)
         if instagram.status == AvailabilityStatus.ERROR:
             return _failed(f"Threads availability depends on Instagram, whose check failed: {instagram.error}")
         if instagram.status == AvailabilityStatus.AVAILABLE:
@@ -775,7 +779,7 @@ def _interpret_instagram_validation(username: str, payload: object) -> Instagram
         raise ValueError(f"Unexpected Instagram validation status: {status}")
     error = validation.get("error")
     message = error.get("message") if isinstance(error, dict) else None
-    if not message:
+    if not isinstance(message, str) or not message:
         raise ValueError(f"Instagram rejected the username without a reason: {json.dumps(validation)[:100]}")
     if message.lower() == f"the username {username.lower()} is not available.":
         return InstagramValidation(InstagramVerdict.NOT_AVAILABLE, message)
